@@ -12,7 +12,9 @@ SOURCE_NAMES = {"rightmove": "Rightmove", "onthemarket": "OnTheMarket", "openren
 class Telegram:
     """Listing alerts go to TELEGRAM_CHAT_ID (the group); failures go to TELEGRAM_ADMIN_CHAT_ID."""
 
-    def __init__(self, token: str | None = None, chat_id: str | None = None, admin_chat_id: str | None = None):
+    def __init__(self, token: str | None = None, chat_id: str | None = None, admin_chat_id: str | None = None,
+                 dashboard_url: str | None = None):
+        self.dashboard_url = dashboard_url
         self.token = token or os.environ.get("TELEGRAM_BOT_TOKEN")
         self.chat_id = chat_id or os.environ.get("TELEGRAM_CHAT_ID")
         self.admin_chat_id = admin_chat_id or os.environ.get("TELEGRAM_ADMIN_CHAT_ID") or self.chat_id
@@ -38,7 +40,7 @@ class Telegram:
             raise
 
     def send_listing(self, listing: Listing, headline: str = "New match") -> int:
-        text = format_listing(listing, headline)
+        text = format_listing(listing, headline, dashboard_url=self.dashboard_url)
         if listing.image:
             try:
                 return self._call("sendPhoto", chat_id=self.chat_id, photo=listing.image,
@@ -49,7 +51,7 @@ class Telegram:
 
     def update_listing(self, message_id: int, listing: Listing, also: list[tuple[str, str]]) -> None:
         """Rewrites an alert in place (photo alerts have a caption, text alerts have text)."""
-        text = format_listing(listing, "New match", also)
+        text = format_listing(listing, "New match", also, dashboard_url=self.dashboard_url)
         try:
             self._call("editMessageCaption", chat_id=self.chat_id, message_id=message_id,
                        caption=text, parse_mode="HTML")
@@ -93,7 +95,8 @@ def fmt_added(l: Listing) -> str:
     return s
 
 
-def format_listing(l: Listing, headline: str, also: list[tuple[str, str]] | None = None) -> str:
+def format_listing(l: Listing, headline: str, also: list[tuple[str, str]] | None = None,
+                   dashboard_url: str | None = None) -> str:
     e = html.escape
     garden = f"Garden: {l.garden}" + (f" ({e(l.garden_reason)})" if l.garden_reason else "")
     parking = {"dedicated": "Parking: dedicated ✅", "on-street": "Parking: on-street only"}.get(l.parking, "Parking: unknown")
@@ -121,4 +124,6 @@ def format_listing(l: Listing, headline: str, also: list[tuple[str, str]] | None
     if also:
         lines.append("Also on: " + " · ".join(
             f'<a href="{e(url)}">{SOURCE_NAMES.get(src, src)}</a>' for src, url in also))
+    if dashboard_url:
+        lines.append(f'<a href="{e(dashboard_url)}">Dashboard</a> (look into / reject)')
     return "\n".join(line for line in lines if line.strip())

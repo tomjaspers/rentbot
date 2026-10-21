@@ -84,6 +84,17 @@ def test_group_only_gets_real_house_alerts(monkeypatch):
     assert len(rec.group) == 2
 
 
+def test_heartbeat_every_third_run(monkeypatch):
+    monkeypatch.setattr(main, "SOURCES", {"rightmove": fake_source("rightmove", [])})
+    store, rec = Store(Path(":memory:")), Recorder()
+    cfg = CFG | {"sources": {"rightmove": {"enabled": True}}, "heartbeat_every": 3}
+    for _ in range(4):
+        main.run_once(cfg, store, rec, http=NoHttp())
+    beats = [a for a in rec.admin if a.startswith("heartbeat")]
+    assert len(beats) == 1 and beats[0].startswith("heartbeat: 3 runs in the last hour (0 failed)")
+    assert rec.group == []
+
+
 def test_source_failure_goes_to_admin_once_then_recovery(monkeypatch):
     src = fake_source("rightmove", [])
     monkeypatch.setattr(main, "SOURCES", {"rightmove": src})

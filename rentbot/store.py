@@ -223,6 +223,10 @@ class Store:
     def get_source_status(self, source: str) -> dict | None:
         return self.db.one("select * from source_status where source = ?", (source,))
 
+    def runs_since(self, ts: float) -> list[dict]:
+        return [r | {"details": json.loads(r["details"] or "{}")}
+                for r in self.db.all("select * from runs where started >= ? order by id", (ts,))]
+
     def last_run(self) -> dict | None:
         return self.db.one("select * from runs order by id desc limit 1")
 

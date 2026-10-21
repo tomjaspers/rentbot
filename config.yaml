@@ -33,4 +33,6 @@ http:
   timeout_seconds: 20
 
 loop_interval_seconds: 600
+heartbeat_every: 3        # every Nth run, tell the admin how many runs happened in the last hour
+dashboard_url: https://rentbot-dashboard.onrender.com   # linked in alerts; woken up when an alert goes out
 watchdog_minutes: 60      # admin alert when no scan has started for this long (GitHub schedules can lag)

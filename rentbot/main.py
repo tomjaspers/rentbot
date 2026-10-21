@@ -8,6 +8,7 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
+import httpx
 import yaml
 from dotenv import load_dotenv
 
@@ -173,12 +174,41 @@ def run_once(cfg: dict, store: Store, notifier, http: Http) -> None:
         store.set_meta("config_hash", chash)
     store.finish_run(run_id, ok, details)
 
+    alerts_sent = sum(d["alerts"] for d in details.values()) + len(pending)
+    if alerts_sent and cfg.get("dashboard_url"):
+        wake_dashboard(cfg["dashboard_url"])
+    every = cfg.get("heartbeat_every")
+    if every and run_id % every == 0:
+        send_heartbeat(store, notifier)
+
     if any(d["new"] or d["alerts"] or d["error"] for d in details.values()) or rechecking:
         notifier.alert_admin(f"run {run_id}{' (re-check after config/code change)' if rechecking else ''}:\n" + "\n".join(
             f"{SOURCE_NAMES[n]}: " + (f"error {d['error']}" if d["error"] else
                                       f"{d['results']} results, {d['new']} new/changed, {d['alerts']} alerts")
             for n, d in details.items()) + (f"\n{len(pending)} newly matching sent to the group" if pending else ""),
             level="info")
+
+
+def wake_dashboard(url: str) -> None:
+    """Free Render instances sleep after 15 idle minutes and take ~1 min to start. Poking it when an
+    alert goes out means it's awake by the time someone taps through. Starting the wake-up only needs
+    the request to arrive, so a short timeout is fine."""
+    try:
+        httpx.get(url.rstrip("/") + "/api/state", timeout=5)
+    except httpx.HTTPError:
+        pass
+
+
+def send_heartbeat(store: Store, notifier) -> None:
+    runs = store.runs_since(time.time() - 3600)
+    done = [r for r in runs if r["finished"]]
+    failed = [r for r in done if not r["ok"]]
+    alerts = sum(d.get("alerts", 0) for r in runs for d in r["details"].values())
+    results = {n: d.get("results") for n, d in (done[-1]["details"] if done else {}).items()}
+    notifier.alert_admin(
+        f"heartbeat: {len(done)} runs in the last hour ({len(failed)} failed), {alerts} group alerts. "
+        f"Latest results: " + ", ".join(f"{SOURCE_NAMES.get(n, n)} {c}" for n, c in results.items()),
+        level="info")
 
 
 # A re-check that suddenly matches more than this sends one digest instead of separate alerts.
@@ -230,7 +260,7 @@ def cli() -> None:
 
     load_dotenv(ROOT / ".env")
     cfg = load_config(args.config)
-    notifier = ConsoleNotifier() if args.dry_run else Telegram()
+    notifier = ConsoleNotifier() if args.dry_run else Telegram(dashboard_url=cfg.get("dashboard_url"))
 
     if args.command == "dashboard":
         from rentbot.dashboard import serve
