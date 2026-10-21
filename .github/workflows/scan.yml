@@ -2,7 +2,7 @@ name: scan
 
 on:
   schedule:
-    - cron: "*/10 * * * *"   # GitHub may start these a few minutes late at busy times
+    - cron: "3-59/10 * * * *" # off the round minutes, where GitHub's scheduler is busiest and drops runs
   workflow_dispatch:          # "Run now" on the dashboard, or manually from the Actions tab
     inputs:
       dry_run:
