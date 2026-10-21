@@ -1,0 +1,25 @@
+# Render Blueprint: the dashboard only. Scans run on GitHub Actions (.github/workflows/scan.yml).
+services:
+  - type: web
+    name: rentbot-dashboard
+    runtime: python
+    plan: free
+    region: frankfurt          # next to the Neon database (eu-central-1)
+    buildCommand: pip install uv && uv sync --frozen --no-dev
+    startCommand: uv run --frozen --no-dev rentbot dashboard
+    healthCheckPath: /api/state
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.13
+      - key: DATABASE_URL
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: TELEGRAM_ADMIN_CHAT_ID
+        sync: false
+      - key: GITHUB_REPO        # owner/name, for the "Run now" button
+        sync: false
+      - key: GITHUB_TOKEN       # fine-grained token: this repo only, Actions read & write
+        sync: false

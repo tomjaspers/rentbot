@@ -1,0 +1,23 @@
+[project]
+name = "rentbot"
+version = "0.1.0"
+description = "Scans UK rental sites and sends a Telegram alert for each new listing that matches."
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.27",
+    "pyyaml>=6.0",
+    "selectolax>=1.0",
+    "python-dotenv>=1.0",
+    "psycopg[binary]>=3.2",
+    "psycopg-pool>=3.2",
+]
+
+[project.scripts]
+rentbot = "rentbot.main:cli"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

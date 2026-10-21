@@ -1,0 +1,36 @@
+criteria:
+  postcode_districts: [BS3]   # listings that show some other district are dropped
+  min_beds: 2
+  max_beds: 2
+  max_price_pcm: 1750
+  property_types: any         # or a list of words to match, e.g. [house, terraced, flat]
+  garden: required            # required | preferred | ignore
+  alert_on_balcony: true      # balcony only -> alert marked "maybe"
+
+# Not filters: these feed the score and what the alert/dashboard shows.
+walk_to:                      # walking distance is routed to this place
+  name: Aldi North Street
+  lat: 51.4429423
+  lng: -2.6140946
+council_tax:                  # Bristol 2026/27
+  band_d_annual: 2713.68
+  discount: 0.25              # single person discount
+  instalments: 12
+
+sources:
+  rightmove:
+    enabled: true
+    location_identifier: "OUTCODE^277"   # BS3
+  onthemarket:
+    enabled: true
+    location: bs3
+  openrent:
+    enabled: true
+    location: bristol-bs3
+
+http:
+  detail_delay_seconds: [2, 5]   # random sleep between detail page fetches
+  timeout_seconds: 20
+
+loop_interval_seconds: 600
+watchdog_minutes: 60      # admin alert when no scan has started for this long (GitHub schedules can lag)

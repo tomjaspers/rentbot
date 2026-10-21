@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+seen.db
+.venv/
+__pycache__/
+.pytest_cache/
+.neon
+node_modules/
+# Saved copies of the sites' pages; kept local rather than republished in a public repo
+tests/fixtures/

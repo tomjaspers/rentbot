@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rentbot</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  :root {
+    --bg: #f6f5f2; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6a66; --line: #e4e2dc;
+    --accent: #2f6f5e; --accent-ink: #ffffff;
+    --ok: #2f7d4f; --ok-bg: #e5f2ea; --bad: #b3402f; --bad-bg: #f8e6e2; --warn: #9a6a12; --warn-bg: #f7eed9;
+    --look: #2c5d9e; --look-bg: #e3ecf8;
+    --radius: 10px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #151615; --panel: #1e201f; --ink: #ecebe7; --muted: #9b9a95; --line: #2f3230;
+      --accent: #5fb39a; --accent-ink: #0f1a16;
+      --ok: #7ccf9c; --ok-bg: #1d3326; --bad: #f08b78; --bad-bg: #3a221d; --warn: #e6bd6a; --warn-bg: #352b17;
+      --look: #8db7ef; --look-bg: #1c2a3d;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1180px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 28px 0 10px; font-weight: 600; }
+  a { color: var(--accent); }
+  .muted { color: var(--muted); }
+  .top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .criteria { color: var(--muted); font-size: 13px; }
+
+  .status { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-top: 16px; }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }
+  .tile .label { font-size: 12px; color: var(--muted); }
+  .tile .value { font-size: 18px; font-weight: 600; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .tile .sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .pill.ok { color: var(--ok); background: var(--ok-bg); }
+  .pill.bad { color: var(--bad); background: var(--bad-bg); }
+  .pill.warn { color: var(--warn); background: var(--warn-bg); }
+  .pill.look { color: var(--look); background: var(--look-bg); }
+
+  button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+           border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+  button:hover { border-color: var(--muted); }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+
+  .sources { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+  details { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); margin-top: 10px; }
+  summary { padding: 10px 14px; cursor: pointer; color: var(--muted); font-size: 13px; }
+  .runs { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .runs th, .runs td { text-align: left; padding: 6px 14px; border-top: 1px solid var(--line); }
+  .runs th { color: var(--muted); font-weight: 500; }
+  .table-wrap { overflow-x: auto; }
+
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+  .tabs button[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  .tabs .count { opacity: .7; margin-left: 4px; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden;
+          display: flex; flex-direction: column; }
+  .card.rejected { opacity: .55; }
+  .card.interested { border-color: var(--look); box-shadow: 0 0 0 1px var(--look) inset; }
+  .media { display: grid; grid-template-columns: 1fr 1fr; aspect-ratio: 2/1; }
+  .photo { background: var(--line) center/cover no-repeat; position: relative; }
+  .minimap { background: var(--line); }
+  .leaflet-container { font: inherit; }
+  .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+  .toolbar .tabs { margin-bottom: 0; }
+  select { font: inherit; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+  .facts { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; font-size: 13px; margin-top: 6px; }
+  .facts dt { color: var(--muted); }
+  .facts dd { margin: 0; }
+  .score { font-size: 13px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--ink); color: var(--bg); cursor: help; }
+  .row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .photo .badges { position: absolute; left: 8px; top: 8px; display: flex; gap: 6px; }
+  .photo .badges .pill { background: rgba(0,0,0,.65); color: #fff; }
+  .body { padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; flex: 1; }
+  .price { font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .addr { font-weight: 500; }
+  .meta { font-size: 13px; color: var(--muted); }
+  .links { display: flex; gap: 10px; flex-wrap: wrap; font-size: 13px; margin-top: 4px; }
+  .actions { display: flex; gap: 6px; padding: 10px 14px; border-top: 1px solid var(--line); }
+  .actions button { flex: 1; font-size: 13px; padding: 6px 8px; }
+  .actions button.on-interested { background: var(--look-bg); color: var(--look); border-color: var(--look); }
+  .actions button.on-rejected { background: var(--bad-bg); color: var(--bad); border-color: var(--bad); }
+  .empty { padding: 40px; text-align: center; color: var(--muted); background: var(--panel);
+           border: 1px dashed var(--line); border-radius: var(--radius); }
+  .err { color: var(--bad); font-size: 12px; word-break: break-word; }
+</style>
+</head>
+<body>
+<main>
+  <div class="top">
+    <div>
+      <h1>Rentbot</h1>
+      <div class="criteria" id="criteria"></div>
+    </div>
+    <button class="primary" id="runNow">Run now</button>
+  </div>
+
+  <div class="status" id="status"></div>
+
+  <h2>Sources</h2>
+  <div class="sources" id="sources"></div>
+  <details id="runsBox">
+    <summary>Run history</summary>
+    <div class="table-wrap"><table class="runs" id="runs"></table></div>
+  </details>
+
+  <h2>Listings</h2>
+  <div class="toolbar">
+    <div class="tabs" id="tabs"></div>
+    <label class="muted">Sort <select id="sort">
+      <option value="score">Best score</option>
+      <option value="newest">Newest listed</option>
+      <option value="price">Cheapest</option>
+      <option value="walk">Closest to Aldi</option>
+      <option value="size">Largest</option>
+    </select></label>
+  </div>
+  <div class="grid" id="listings"></div>
+</main>
+
+<script>
+const SOURCE_NAMES = { rightmove: "Rightmove", onthemarket: "OnTheMarket", openrent: "OpenRent" };
+const TABS = [
+  ["new", "New"], ["interested", "Looking into"], ["rejected", "Rejected"], ["all", "All"],
+];
+let state = null;
+let tab = (() => { try { return localStorage.getItem("rentbot.tab") || "new"; } catch { return "new"; } })();
+
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const money = n => n == null ? "?" : "£" + n.toLocaleString("en-GB");
+const time = t => t ? new Date(t * 1000).toLocaleString("en-GB", { weekday: "short", hour: "2-digit", minute: "2-digit" }) : "–";
+function ago(t) {
+  if (!t) return "never";
+  const s = Math.round(Date.now() / 1000 - t);
+  if (s < 0) return "in " + dur(-s);
+  return dur(s) + " ago";
+}
+function dur(s) {
+  if (s < 60) return s + "s";
+  if (s < 3600) return Math.round(s / 60) + " min";
+  if (s < 86400) return Math.round(s / 3600) + " h";
+  return Math.round(s / 86400) + " d";
+}
+
+let lastJson = "";
+async function load() {
+  const r = await fetch("/api/state");
+  const text = await r.text();
+  if (text === lastJson) return;  // avoid rebuilding maps when nothing changed
+  lastJson = text;
+  state = JSON.parse(text);
+  render();
+}
+
+function render() {
+  const c = state.criteria;
+  document.getElementById("criteria").textContent =
+    `${(c.postcode_districts || []).join(", ")} · ${c.min_beds === c.max_beds ? c.min_beds : c.min_beds + "–" + c.max_beds} bed · ` +
+    `≤ ${money(c.max_price_pcm)} pcm · garden ${c.garden}`;
+
+  const last = state.runs[0];
+  const lastDone = state.runs.find(r => r.finished);
+  const running = last && !last.finished && (Date.now() / 1000 - last.started) < 900;
+  const next = lastDone ? lastDone.started + state.interval_seconds : null;
+  const failures = state.sources.filter(s => s.consecutive_failures > 0);
+  const counts = { new: 0, interested: 0, rejected: 0 };
+  state.listings.forEach(l => counts[l.status] = (counts[l.status] || 0) + 1);
+
+  let lastStatus = '<span class="pill warn">no runs yet</span>';
+  if (running) lastStatus = '<span class="pill warn">running…</span>';
+  else if (lastDone) lastStatus = lastDone.ok ? '<span class="pill ok">success</span>' : '<span class="pill bad">failed</span>';
+
+  document.getElementById("status").innerHTML = `
+    <div class="tile"><div class="label">Last run</div><div class="value">${lastDone ? ago(lastDone.finished) : "never"}</div>
+      <div class="sub">${lastStatus} ${lastDone ? time(lastDone.finished) : ""}</div></div>
+    <div class="tile"><div class="label">Next run</div><div class="value">${running ? "now" : next ? (next * 1000 > Date.now() ? ago(next) : "due") : "–"}</div>
+      <div class="sub">every ${Math.round(state.interval_seconds / 60)} min while the laptop is awake</div></div>
+    <div class="tile"><div class="label">To review</div><div class="value">${counts.new}</div>
+      <div class="sub">${counts.interested} looking into · ${counts.rejected} rejected</div></div>
+    <div class="tile"><div class="label">Sources</div><div class="value">${failures.length ? failures.length + " failing" : "all OK"}</div>
+      <div class="sub">${state.sources.length} enabled</div></div>`;
+
+  const lastDetails = lastDone ? lastDone.details : {};
+  document.getElementById("sources").innerHTML = state.sources.map(s => {
+    const d = lastDetails[s.source] || {};
+    const pill = s.consecutive_failures ? `<span class="pill bad">failing × ${s.consecutive_failures}</span>` : '<span class="pill ok">OK</span>';
+    return `<div class="tile"><div class="label">${esc(SOURCE_NAMES[s.source] || s.source)} ${pill}</div>
+      <div class="sub">${d.results ?? "–"} results last run · ${d.new ?? 0} new · ${d.alerts ?? 0} alerts</div>
+      ${s.last_error ? `<div class="err">${esc(s.last_error)}</div>` : ""}</div>`;
+  }).join("");
+
+  document.getElementById("runs").innerHTML = `<tr><th>Started</th><th>Took</th><th>Result</th>${Object.keys(SOURCE_NAMES).map(k => `<th>${SOURCE_NAMES[k]}</th>`).join("")}</tr>` +
+    state.runs.map(r => `<tr><td>${time(r.started)}</td><td>${r.finished ? dur(Math.round(r.finished - r.started)) : "…"}</td>
+      <td>${!r.finished ? '<span class="pill warn">running</span>' : r.ok ? '<span class="pill ok">ok</span>' : '<span class="pill bad">failed</span>'}</td>
+      ${Object.keys(SOURCE_NAMES).map(k => { const d = r.details[k]; return `<td>${!d ? "–" : d.error ? '<span class="pill bad">error</span>' : `${d.results} / ${d.new} new / ${d.alerts} alerts`}</td>`; }).join("")}</tr>`).join("");
+
+  document.getElementById("tabs").innerHTML = TABS.map(([k, label]) =>
+    `<button aria-pressed="${tab === k}" data-tab="${k}">${label}<span class="count">${k === "all" ? state.listings.length : counts[k] || 0}</span></button>`).join("");
+
+  const shown = state.listings.filter(l => tab === "all" || l.status === tab).sort(SORTS[sort]);
+  const box = document.getElementById("listings");
+  cardMaps.forEach(m => m.remove()); cardMaps = [];
+  if (!shown.length) {
+    box.innerHTML = `<div class="empty">${tab === "new" ? "Nothing new to review." : "No listings here yet."}</div>`;
+    return;
+  }
+  box.innerHTML = shown.map(card).join("");
+  box.querySelectorAll(".minimap").forEach(el => mapObserver.observe(el));
+}
+
+const SORTS = {
+  score: (a, b) => (b.score ?? 0) - (a.score ?? 0) || (b.added_at ?? 0) - (a.added_at ?? 0),
+  newest: (a, b) => (b.added_at ?? b.first_seen) - (a.added_at ?? a.first_seen),
+  price: (a, b) => (a.price_pcm ?? 1e9) - (b.price_pcm ?? 1e9),
+  walk: (a, b) => (a.walk_min ?? 1e9) - (b.walk_min ?? 1e9),
+  size: (a, b) => (b.size_sqft ?? 0) - (a.size_sqft ?? 0),
+};
+let sort = (() => { try { return localStorage.getItem("rentbot.sort") || "score"; } catch { return "score"; } })();
+document.getElementById("sort").value = sort;
+document.getElementById("sort").addEventListener("change", e => {
+  sort = e.target.value;
+  try { localStorage.setItem("rentbot.sort", sort); } catch {}
+  render();
+});
+
+function listedText(l) {
+  const t = l.added_at;
+  let s = t ? (Date.now() / 1000 - t < 86400 ? "today" : Date.now() / 1000 - t < 2 * 86400 ? "yesterday" : ago(t)) : (l.added_label || "unknown");
+  if ((l.added_label || "").toLowerCase().startsWith("reduced")) s += " · reduced";
+  return s;
+}
+function freshness(l) {
+  const t = l.added_at; if (!t) return "";
+  const d = (Date.now() / 1000 - t) / 86400;
+  if (d < 1) return '<span class="pill ok">fresh</span>';
+  if (d < 3) return '<span class="pill ok">recent</span>';
+  if (d >= 14) return '<span class="pill bad" title="On the market 2+ weeks: likely many enquiries already">picked over?</span>';
+  if (d >= 7) return '<span class="pill warn">1+ week</span>';
+  return "";
+}
+const sqm = ft => Math.round(ft / 10.7639);
+const ft = m => Math.round(m * 3.281);
+
+function card(l) {
+  const garden = l.garden === "yes" ? '<span class="pill ok">garden</span>' : l.garden === "maybe" ? `<span class="pill warn">${esc(l.garden_reason || "maybe")}</span>` : '<span class="muted">no garden</span>';
+  const parking = l.parking === "dedicated" ? `<span class="pill ok">dedicated</span> <span class="muted">${esc(l.parking_reason || "")}</span>`
+    : l.parking === "on-street" ? '<span class="muted">on-street only</span>' : '<span class="muted">unknown</span>';
+  const age = l.age === "modern" ? `<span class="pill ok">modern</span> <span class="muted">${esc(l.age_reason || "")}</span>`
+    : l.age === "period" ? `<span class="pill warn">period</span> <span class="muted">${esc(l.age_reason || "")}</span>` : '<span class="muted">unknown</span>';
+  const walk = l.walk_m != null ? `${l.walk_min} min · ${l.walk_m.toLocaleString("en-GB")} m / ${ft(l.walk_m).toLocaleString("en-GB")} ft` : '<span class="muted">unknown</span>';
+  const size = l.size_sqft ? `${l.size_sqft.toLocaleString("en-GB")} sq ft / ${sqm(l.size_sqft)} m²` : '<span class="muted">not stated</span>';
+  const ct = l.council_tax_month ? `Band ${esc(l.council_tax_band)} · ${money(Math.round(l.council_tax_month))}/mo <span class="muted">(${money(Math.round(l.council_tax_year))}/yr after 25%)</span>`
+    : '<span class="muted">band unknown</span>';
+  const avail = !l.available ? '<span class="muted">unknown</span>' : l.available === "Now" ? "now"
+    : new Date(l.available).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  return `<article class="card ${l.status}">
+    <div class="media">
+      <div class="photo" style="${l.image ? `background-image:url('${esc(l.image)}')` : ""}">
+        <div class="badges">${l.status === "interested" ? '<span class="pill">looking into</span>' : ""}</div>
+      </div>
+      <div class="minimap" data-lat="${l.lat ?? ""}" data-lng="${l.lng ?? ""}"></div>
+    </div>
+    <div class="body">
+      <div class="row"><div class="price">${money(l.price_pcm)} <span class="meta">pcm</span></div>
+        <span class="score" title="${esc((l.score_notes || []).join("\n"))}">score ${l.score ?? "–"}</span></div>
+      <div class="addr">${esc(l.address)}</div>
+      <div class="meta">${l.beds ?? "?"} bed ${esc(l.property_type || "")}${l.epc ? " · EPC " + esc(l.epc) : ""} · ${esc(l.agent || "")}</div>
+      <dl class="facts">
+        <dt>Listed</dt><dd>${listedText(l)} ${freshness(l)}</dd>
+        <dt>Available</dt><dd>${avail}</dd>
+        <dt>Garden</dt><dd>${garden}</dd>
+        <dt>Parking</dt><dd>${parking}</dd>
+        <dt>To Aldi</dt><dd>${walk}</dd>
+        <dt>Size</dt><dd>${size}</dd>
+        <dt>Building</dt><dd>${age}</dd>
+        <dt>Council tax</dt><dd>${ct}</dd>
+      </dl>
+      <div class="links">${l.links.map(x => `<a href="${esc(x.url)}" target="_blank" rel="noopener">${SOURCE_NAMES[x.source] || x.source} ↗</a>`).join("")}</div>
+    </div>
+    <div class="actions">
+      <button data-fp="${esc(l.fingerprint)}" data-status="${l.status === "interested" ? "new" : "interested"}" class="${l.status === "interested" ? "on-interested" : ""}">${l.status === "interested" ? "✓ Looking into" : "Look into"}</button>
+      <button data-fp="${esc(l.fingerprint)}" data-status="${l.status === "rejected" ? "new" : "rejected"}" class="${l.status === "rejected" ? "on-rejected" : ""}">${l.status === "rejected" ? "✕ Rejected" : "Reject"}</button>
+    </div>
+  </article>`;
+}
+
+// --- maps (OpenStreetMap via Leaflet) ---
+const TILES = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
+const ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+const aldiIcon = () => L.divIcon({ className: "", html: '<div style="background:#1f4fa3;color:#fff;font:700 11px/1 sans-serif;padding:4px 6px;border-radius:6px;white-space:nowrap">Aldi</div>', iconSize: null });
+const homeIcon = (txt, color) => L.divIcon({ className: "", html: `<div style="background:${color};color:#fff;font:700 11px/1 sans-serif;padding:4px 6px;border-radius:6px;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.4)">${txt}</div>`, iconSize: null });
+let cardMaps = [];
+
+const mapObserver = new IntersectionObserver(entries => {
+  entries.forEach(en => {
+    if (!en.isIntersecting || typeof L === "undefined") return;
+    const el = en.target; mapObserver.unobserve(el);
+    const lat = parseFloat(el.dataset.lat), lng = parseFloat(el.dataset.lng);
+    if (!lat || !lng) { el.innerHTML = '<div class="empty" style="height:100%;padding:12px;border:0">no location</div>'; return; }
+    const w = state.walk_to;
+    const m = L.map(el, { zoomControl: false, attributionControl: false, scrollWheelZoom: false, dragging: true });
+    L.tileLayer(TILES, { maxZoom: 19 }).addTo(m);
+    L.marker([lat, lng], { icon: homeIcon("●", "#c2412d") }).addTo(m);
+    L.marker([w.lat, w.lng], { icon: aldiIcon() }).addTo(m);
+    m.fitBounds([[lat, lng], [w.lat, w.lng]], { padding: [18, 18], maxZoom: 17 });
+    cardMaps.push(m);
+  });
+}, { rootMargin: "200px" });
+
+document.addEventListener("click", async e => {
+  const t = e.target.closest("button");
+  if (!t) return;
+  if (t.dataset.tab) {
+    tab = t.dataset.tab;
+    try { localStorage.setItem("rentbot.tab", tab); } catch {}
+    render();
+  } else if (t.dataset.fp !== undefined) {
+    t.disabled = true;
+    await fetch("/api/status", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fingerprint: t.dataset.fp, status: t.dataset.status }) });
+    await load();
+  } else if (t.id === "runNow") {
+    t.disabled = true; t.textContent = "Starting…";
+    const r = await fetch("/api/run", { method: "POST" });
+    const res = await r.json().catch(() => ({}));
+    t.textContent = r.ok ? "Started, results in a few min" : r.status === 429 ? "Already started" : "Failed to start";
+    if (!r.ok && res.error) t.title = res.error;
+    setTimeout(() => { t.disabled = false; t.textContent = "Run now"; load(); }, 4000);
+  }
+});
+
+load();
+setInterval(load, 30000);
+</script>
+</body>
+</html>
