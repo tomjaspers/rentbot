@@ -191,7 +191,9 @@ function render() {
     <div class="tile"><div class="label">Sources</div><div class="value">${failures.length ? failures.length + " failing" : "all OK"}</div>
       <div class="sub">${state.sources.length} enabled</div></div>`;
 
-  const lastDetails = lastDone ? lastDone.details : {};
+  // Latest finished run per source (GitHub and the laptop scan different sources).
+  const lastDetails = {};
+  state.runs.filter(r => r.finished).forEach(r => Object.entries(r.details).forEach(([k, d]) => { if (!(k in lastDetails)) lastDetails[k] = d; }));
   document.getElementById("sources").innerHTML = state.sources.map(s => {
     const d = lastDetails[s.source] || {};
     const pill = s.consecutive_failures ? `<span class="pill bad">failing × ${s.consecutive_failures}</span>` : '<span class="pill ok">OK</span>';
@@ -200,8 +202,8 @@ function render() {
       ${s.last_error ? `<div class="err">${esc(s.last_error)}</div>` : ""}</div>`;
   }).join("");
 
-  document.getElementById("runs").innerHTML = `<tr><th>Started</th><th>Took</th><th>Result</th>${Object.keys(SOURCE_NAMES).map(k => `<th>${SOURCE_NAMES[k]}</th>`).join("")}</tr>` +
-    state.runs.map(r => `<tr><td>${time(r.started)}</td><td>${r.finished ? dur(Math.round(r.finished - r.started)) : "…"}</td>
+  document.getElementById("runs").innerHTML = `<tr><th>Started</th><th>Where</th><th>Took</th><th>Result</th>${Object.keys(SOURCE_NAMES).map(k => `<th>${SOURCE_NAMES[k]}</th>`).join("")}</tr>` +
+    state.runs.map(r => `<tr><td>${time(r.started)}</td><td>${esc(r.runner || "–")}</td><td>${r.finished ? dur(Math.round(r.finished - r.started)) : "…"}</td>
       <td>${!r.finished ? '<span class="pill warn">running</span>' : r.ok ? '<span class="pill ok">ok</span>' : '<span class="pill bad">failed</span>'}</td>
       ${Object.keys(SOURCE_NAMES).map(k => { const d = r.details[k]; return `<td>${!d ? "–" : d.error ? '<span class="pill bad">error</span>' : `${d.results} / ${d.new} new / ${d.alerts} alerts`}</td>`; }).join("")}</tr>`).join("");
 

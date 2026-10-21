@@ -84,6 +84,27 @@ def test_group_only_gets_real_house_alerts(monkeypatch):
     assert len(rec.group) == 2
 
 
+def test_two_machines_split_sources_without_rechecking_each_other(monkeypatch):
+    rm, orent = fake_source("rightmove", [house("rightmove", "1")]), fake_source("openrent", [])
+    monkeypatch.setattr(main, "SOURCES", {"rightmove": rm, "openrent": orent})
+    store, rec = Store(Path(":memory:")), Recorder()
+    cfg = CFG | {"sources": {"rightmove": {"enabled": True}, "openrent": {"enabled": False}}}
+
+    main.run_once(cfg, store, rec, NoHttp(), runner="github")                    # seeds
+    monkeypatch.setattr(main, "config_hash", lambda cfg: "laptop-code")         # laptop runs other code
+    main.run_once(cfg, store, rec, NoHttp(), only=["openrent"], runner="laptop")
+    monkeypatch.setattr(main, "config_hash", lambda cfg: "github-code")
+    main.run_once(cfg, store, rec, NoHttp(), runner="github")                    # first re-check of rightmove
+    rec.admin.clear()
+    main.run_once(cfg, store, rec, NoHttp(), runner="github")
+    monkeypatch.setattr(main, "config_hash", lambda cfg: "laptop-code")
+    main.run_once(cfg, store, rec, NoHttp(), only=["openrent"], runner="laptop")
+    assert not any("re-check" in a for a in rec.admin)  # no ping-pong between code versions
+    runs = store.runs_since(0)
+    assert [r["runner"] for r in runs] == ["github", "laptop", "github", "github", "laptop"]
+    assert all(set(r["details"]) == ({"openrent"} if r["runner"] == "laptop" else {"rightmove"}) for r in runs)
+
+
 def test_heartbeat_every_third_run(monkeypatch):
     monkeypatch.setattr(main, "SOURCES", {"rightmove": fake_source("rightmove", [])})
     store, rec = Store(Path(":memory:")), Recorder()
@@ -91,7 +112,7 @@ def test_heartbeat_every_third_run(monkeypatch):
     for _ in range(4):
         main.run_once(cfg, store, rec, http=NoHttp())
     beats = [a for a in rec.admin if a.startswith("heartbeat")]
-    assert len(beats) == 1 and beats[0].startswith("heartbeat: 3 runs in the last hour (0 failed)")
+    assert len(beats) == 1 and beats[0].startswith("heartbeat: 3 runs in the last hour (3 local; 0 failed)")
     assert rec.group == []
 
 

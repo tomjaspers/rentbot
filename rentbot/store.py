@@ -2,6 +2,7 @@ import json
 import sqlite3
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from rentbot.models import Listing
@@ -54,6 +55,10 @@ LISTING_COLUMNS = {
     "criteria_hash": "text",   # config the row was last evaluated against
 }
 
+RUN_COLUMNS = {
+    "runner": "text",  # which machine ran it: github | laptop
+}
+
 STATUSES = ("new", "interested", "rejected")
 
 
@@ -63,6 +68,7 @@ class Db:
 
     def __init__(self, target: str | Path):
         self.pg = str(target).startswith(("postgres://", "postgresql://"))
+        self.url = str(target)
         if self.pg:
             from psycopg.rows import dict_row
             from psycopg_pool import ConnectionPool
@@ -75,7 +81,7 @@ class Db:
         else:
             self.conn = sqlite3.connect(target, check_same_thread=False)
             self.conn.row_factory = sqlite3.Row
-            self.lock = threading.Lock()
+            self._mutex = threading.Lock()  # one SQLite connection shared by dashboard threads
 
     def close(self) -> None:
         if self.pg:
@@ -93,7 +99,7 @@ class Db:
                 cur = conn.execute(self._sql(sql), params)
                 rows = cur.fetchall() if cur.description else []
                 return rows, cur.rowcount
-        with self.lock:
+        with self._mutex:
             cur = self.conn.execute(sql, params)
             rows = [dict(r) for r in cur.fetchall()] if cur.description else []
             self.conn.commit()
@@ -106,28 +112,56 @@ class Db:
         rows = self.run(sql, params)[0]
         return rows[0] if rows else None
 
-    def ddl(self, schema: str, columns: dict[str, str]) -> None:
+    def ddl(self, schema: str, added_columns: dict[str, dict[str, str]]) -> None:
         if self.pg:
             schema = (schema.replace("integer primary key autoincrement", "bigserial primary key")
                       .replace(" real", " double precision").replace(" integer", " bigint"))
         for stmt in (st.strip() for st in schema.split(";")):
             if stmt:
                 self.run(stmt)
-        if self.pg:
-            for col, ddl in columns.items():
-                ddl = ddl.replace("real", "double precision").replace("integer", "bigint")
-                self.run(f"alter table listings add column if not exists {col} {ddl}")
-        else:
-            have = {r["name"] for r in self.all("pragma table_info(listings)")}
-            for col, ddl in columns.items():
-                if col not in have:
-                    self.run(f"alter table listings add column {col} {ddl}")
+        for table, columns in added_columns.items():
+            if self.pg:
+                for col, ddl in columns.items():
+                    ddl = ddl.replace("real", "double precision").replace("integer", "bigint")
+                    self.run(f"alter table {table} add column if not exists {col} {ddl}")
+            else:
+                have = {r["name"] for r in self.all(f"pragma table_info({table})")}
+                for col, ddl in columns.items():
+                    if col not in have:
+                        self.run(f"alter table {table} add column {col} {ddl}")
+
+    @contextmanager
+    def lock(self, key: int, timeout: float):
+        """Cross-machine mutex (Postgres advisory lock); a no-op on local SQLite. Session-level
+        locks don't survive PgBouncer's transaction pooling, so this uses a direct connection."""
+        if not self.pg:
+            yield
+            return
+        import psycopg
+
+        direct = self.url.replace("-pooler.", ".", 1)
+        with psycopg.connect(direct, autocommit=True) as conn:
+            deadline = time.time() + timeout
+            while not conn.execute("select pg_try_advisory_lock(%s)", (key,)).fetchone()[0]:
+                if time.time() > deadline:
+                    raise TimeoutError(f"another run still holds the scan lock after {timeout:.0f}s")
+                time.sleep(5)
+            try:
+                yield
+            finally:
+                conn.execute("select pg_advisory_unlock(%s)", (key,))
+
+
+SCAN_LOCK = 4242  # advisory lock id: one scan at a time across GitHub Actions and the laptop
 
 
 class Store:
     def __init__(self, target: str | Path):
         self.db = Db(target)
-        self.db.ddl(SCHEMA, LISTING_COLUMNS)
+        self.db.ddl(SCHEMA, {"listings": LISTING_COLUMNS, "runs": RUN_COLUMNS})
+
+    def run_lock(self, timeout: float = 900):
+        return self.db.lock(SCAN_LOCK, timeout)
 
     def is_empty(self) -> bool:
         return self.db.one("select 1 as x from listings limit 1") is None
@@ -195,8 +229,9 @@ class Store:
 
     # --- runs and source health ---
 
-    def start_run(self) -> int:
-        return self.db.one("insert into runs (started) values (?) returning id", (time.time(),))["id"]
+    def start_run(self, runner: str = "") -> int:
+        return self.db.one("insert into runs (started, runner) values (?, ?) returning id",
+                           (time.time(), runner))["id"]
 
     def finish_run(self, run_id: int, ok: bool, details: dict) -> None:
         self.db.run(

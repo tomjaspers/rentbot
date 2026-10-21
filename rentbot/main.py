@@ -5,6 +5,7 @@ import json
 import os
 import time
 import traceback
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
@@ -69,25 +70,36 @@ def config_hash(cfg: dict) -> str:
     return h.hexdigest()[:12]
 
 
-def run_once(cfg: dict, store: Store, notifier, http: Http) -> None:
+def run_once(cfg: dict, store: Store, notifier, http: Http, only: list[str] | None = None,
+             runner: str = "local") -> None:
+    """One scan. `only` restricts it to those sources (ignoring their `enabled` flag), so a second
+    machine can cover a source the first can't reach. Runs on different machines share the database
+    and take turns via store.run_lock()."""
+    with store.run_lock():
+        _run(cfg, store, notifier, http, only, runner)
+
+
+def _run(cfg: dict, store: Store, notifier, http: Http, only: list[str] | None, runner: str) -> None:
     criteria = cfg["criteria"]
     chash = config_hash(cfg)
     seeding = store.is_empty()
-    # After a config change every listing is re-checked; new matches then go out as one summary.
-    rechecking = not seeding and store.get_meta("config_hash") != chash
     if seeding:
         log("empty database: recording current listings without alerting")
-    elif rechecking:
-        log("config/code changed: re-checking every listing quietly")
     quiet_matches: dict[str, Listing] = {}
     pending: list[tuple[Listing, str, str]] = []
-    run_id = store.start_run()
+    run_id = store.start_run(runner)
     details: dict[str, dict] = {}
+    rechecked: list[str] = []
 
     for name, cls in SOURCES.items():
         scfg = cfg["sources"].get(name) or {}
-        if not scfg.get("enabled"):
+        if not (name in only if only else scfg.get("enabled")):
             continue
+        # Tracked per source: each source is scanned by one machine, whose code version may differ.
+        rechecking = not seeding and store.get_meta(f"config_hash:{name}") != chash
+        if rechecking:
+            log(f"{name}: config/code changed: re-checking every listing quietly")
+            rechecked.append(name)
         source = cls(scfg, criteria)
         stats = details[name] = {"results": 0, "new": 0, "alerts": 0, "error": None, "detail_errors": 0}
         try:
@@ -169,9 +181,10 @@ def run_once(cfg: dict, store: Store, notifier, http: Http) -> None:
             f"{SOURCE_NAMES[n]}: {d['detail_errors']}× e.g. {d['detail_error_examples'][0]}"
             for n, d in detail_failures.items()))
 
+    for n, d in details.items():
+        if not d["error"]:
+            store.set_meta(f"config_hash:{n}", chash)
     ok = all(not d["error"] for d in details.values())
-    if ok:
-        store.set_meta("config_hash", chash)
     store.finish_run(run_id, ok, details)
 
     alerts_sent = sum(d["alerts"] for d in details.values()) + len(pending)
@@ -181,8 +194,9 @@ def run_once(cfg: dict, store: Store, notifier, http: Http) -> None:
     if every and run_id % every == 0:
         send_heartbeat(store, notifier)
 
-    if any(d["new"] or d["alerts"] or d["error"] for d in details.values()) or rechecking:
-        notifier.alert_admin(f"run {run_id}{' (re-check after config/code change)' if rechecking else ''}:\n" + "\n".join(
+    if any(d["new"] or d["alerts"] or d["error"] for d in details.values()) or rechecked:
+        recheck_note = f" (re-check of {', '.join(SOURCE_NAMES[n] for n in rechecked)})" if rechecked else ""
+        notifier.alert_admin(f"run {run_id} on {runner}{recheck_note}:\n" + "\n".join(
             f"{SOURCE_NAMES[n]}: " + (f"error {d['error']}" if d["error"] else
                                       f"{d['results']} results, {d['new']} new/changed, {d['alerts']} alerts")
             for n, d in details.items()) + (f"\n{len(pending)} newly matching sent to the group" if pending else ""),
@@ -204,9 +218,13 @@ def send_heartbeat(store: Store, notifier) -> None:
     done = [r for r in runs if r["finished"]]
     failed = [r for r in done if not r["ok"]]
     alerts = sum(d.get("alerts", 0) for r in runs for d in r["details"].values())
-    results = {n: d.get("results") for n, d in (done[-1]["details"] if done else {}).items()}
+    by_runner = Counter(r.get("runner") or "?" for r in done)
+    results = {}  # latest result count per source, whichever machine scanned it
+    for r in done:
+        results |= {n: d.get("results") for n, d in r["details"].items()}
     notifier.alert_admin(
-        f"heartbeat: {len(done)} runs in the last hour ({len(failed)} failed), {alerts} group alerts. "
+        f"heartbeat: {len(done)} runs in the last hour ({', '.join(f'{n} {k}' for k, n in by_runner.items())}; "
+        f"{len(failed)} failed), {alerts} group alerts. "
         f"Latest results: " + ", ".join(f"{SOURCE_NAMES.get(n, n)} {c}" for n, c in results.items()),
         level="info")
 
@@ -256,7 +274,14 @@ def cli() -> None:
     p.add_argument("--dry-run", action="store_true", help="print alerts instead of sending; use a throwaway database")
     p.add_argument("--config", type=Path, default=ROOT / "config.yaml")
     p.add_argument("--db", type=Path, default=ROOT / "seen.db")
+    p.add_argument("--sources", help="comma-separated sources to scan, overriding `enabled` in the config "
+                                     "(e.g. the laptop runs --sources openrent)")
+    p.add_argument("--runner", default="github" if os.environ.get("GITHUB_ACTIONS") else "laptop",
+                   help="name shown in run history and admin logs")
     args = p.parse_args()
+    only = [s.strip() for s in args.sources.split(",")] if args.sources else None
+    if only and (unknown := set(only) - SOURCES.keys()):
+        p.error(f"unknown sources: {', '.join(sorted(unknown))}")
 
     load_dotenv(ROOT / ".env")
     cfg = load_config(args.config)
@@ -279,7 +304,7 @@ def cli() -> None:
                 if args.dry_run:  # skip seeding so every match prints as an alert
                     store.save(Listing("dry", "run", "", "", None, None), "", False)
                 http = Http(cfg["http"]["timeout_seconds"], tuple(cfg["http"]["detail_delay_seconds"]))
-            run_once(cfg, store, notifier, http)
+            run_once(cfg, store, notifier, http, only=only, runner=args.runner)
         except Exception:
             tb = traceback.format_exc()
             log("run failed:\n" + tb)
