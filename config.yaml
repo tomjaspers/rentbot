@@ -25,7 +25,7 @@ sources:
     enabled: true
     location: bs3
   openrent:
-    enabled: true
+    enabled: false   # blocks GitHub Actions IPs (405); its listings are also syndicated to Rightmove/OnTheMarket
     location: bristol-bs3
 
 http:
