@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -5,7 +6,7 @@ import pytest
 from rentbot.dedupe import fingerprint, street
 from rentbot.filters import basic_match, classify_garden, full_match
 from rentbot.models import Listing
-from rentbot.sources import onthemarket, openrent, rightmove
+from rentbot.sources import bristolreslet, onthemarket, openrent, rightmove
 from rentbot.sources.base import parse_price_pcm
 
 FIX = Path(__file__).parent / "fixtures"
@@ -52,6 +53,18 @@ def test_openrent_search_and_detail():
     assert first.address == "1 Bed Flat, Skypark Road, BS3"
     assert first.property_type == "flat"
     assert first.garden_flag is False
+
+
+def test_bristolreslet_search_and_detail():
+    results = bristolreslet.parse_search(json.loads(read("bristolreslet_search.json")))
+    assert results and all(l.price_pcm and l.beds for l in results)
+    aubrey = next(l for l in results if "Aubrey" in l.address)
+    assert (aubrey.price_pcm, aubrey.beds, aubrey.available) == (1950, 3, "2026-12-11")
+    assert aubrey.url.endswith("/a1463377-6a7d-416f-8e8e-49bd6bff4505")
+    bristolreslet.parse_detail(read("bristolreslet_detail.html"), aubrey)
+    assert "Free on street parking" in aubrey.features
+    assert (aubrey.garden_flag, aubrey.parking_types, aubrey.epc, aubrey.council_tax_band) == (True, ["on_street"], "D", "B")
+    assert aubrey.description.startswith("Situated in the sought after Chessels area")
 
 
 def test_same_house_on_two_sites_has_same_fingerprint():

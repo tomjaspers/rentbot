@@ -1,7 +1,7 @@
 criteria:
   postcode_districts: [BS3]   # listings that show some other district are dropped
   min_beds: 2
-  max_beds: 2
+  max_beds: 3
   max_price_pcm: 2000
   property_types: any         # or a list of words to match, e.g. [house, terraced, flat]
   garden: required            # required | preferred | ignore
@@ -27,6 +27,8 @@ sources:
   openrent:
     enabled: false   # blocks datacenter IPs (405 on GitHub Actions and Render): only the laptop worker scans it
     location: bristol-bs3
+  bristolreslet:      # The Bristol Residential Letting Co: some of their lets appear only on their own site
+    enabled: true
 
 http:
   detail_delay_seconds: [2, 5]   # random sleep between detail page fetches

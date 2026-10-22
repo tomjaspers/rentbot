@@ -19,13 +19,15 @@ from rentbot.filters import basic_match, full_match
 from rentbot.http import Http
 from rentbot.models import Listing
 from rentbot.notify import SOURCE_NAMES, Telegram, format_listing
+from rentbot.sources.bristolreslet import BristolResLet
 from rentbot.sources.onthemarket import OnTheMarket
 from rentbot.sources.openrent import OpenRent
 from rentbot.sources.rightmove import Rightmove
 from rentbot.store import Store
 
 ROOT = Path(__file__).resolve().parent.parent
-SOURCES = {"rightmove": Rightmove, "onthemarket": OnTheMarket, "openrent": OpenRent}
+SOURCES = {"rightmove": Rightmove, "onthemarket": OnTheMarket, "openrent": OpenRent,
+           "bristolreslet": BristolResLet}
 
 
 def log(msg: str) -> None:

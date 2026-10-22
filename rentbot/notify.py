@@ -6,7 +6,8 @@ import httpx
 
 from rentbot.models import Listing
 
-SOURCE_NAMES = {"rightmove": "Rightmove", "onthemarket": "OnTheMarket", "openrent": "OpenRent"}
+SOURCE_NAMES = {"rightmove": "Rightmove", "onthemarket": "OnTheMarket", "openrent": "OpenRent",
+                "bristolreslet": "Bristol Res Let"}
 
 
 class Telegram:
