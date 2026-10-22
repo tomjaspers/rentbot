@@ -25,7 +25,7 @@ sources:
     enabled: true
     location: bs3
   openrent:
-    enabled: true    # blocks GitHub Actions IPs (405), so only Render and the laptop scan it
+    enabled: false   # blocks datacenter IPs (405 on GitHub Actions and Render): only the laptop worker scans it
     location: bristol-bs3
 
 http:

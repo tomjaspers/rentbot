@@ -249,7 +249,7 @@ class Store:
     def record_failure(self, source: str, error: str) -> dict:
         self.db.run(
             """insert into source_status (source, consecutive_failures, last_error) values (?, 1, ?)
-               on conflict(source) do update set consecutive_failures = consecutive_failures + 1,
+               on conflict(source) do update set consecutive_failures = source_status.consecutive_failures + 1,
                    last_error = excluded.last_error""",
             (source, error),
         )
