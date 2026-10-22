@@ -1,4 +1,5 @@
-# Render Blueprint: the dashboard only. Scans run on GitHub Actions (.github/workflows/scan.yml).
+# Render Blueprint: the dashboard, which also scans when cron-job.org calls /api/scan every 10 min
+# (the calls also keep the free instance awake).
 services:
   - type: web
     name: rentbot-dashboard
@@ -19,7 +20,5 @@ services:
         sync: false
       - key: TELEGRAM_ADMIN_CHAT_ID
         sync: false
-      - key: GITHUB_REPO        # owner/name, for the "Run now" button
-        sync: false
-      - key: GITHUB_TOKEN       # fine-grained token: this repo only, Actions read & write
+      - key: SCAN_TOKEN         # bearer token cron-job.org sends to /api/scan
         sync: false

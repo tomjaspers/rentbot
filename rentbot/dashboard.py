@@ -1,17 +1,14 @@
+import hmac
 import json
 import os
-import subprocess
 import threading
 import time
-
-import httpx
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from rentbot.store import Store
 
 PAGE = Path(__file__).with_name("dashboard.html")
-LAUNCHD_LABEL = "com.tjaspers.rentbot"
 
 
 def watchdog(store: Store, notifier, interval: int, max_gap_minutes: int, check_every: int = 300) -> None:
@@ -44,26 +41,33 @@ def watchdog(store: Store, notifier, interval: int, max_gap_minutes: int, check_
 RUN_COOLDOWN_SECONDS = 120  # the dashboard has no password, so don't let anyone spam runs
 
 
-def trigger_run() -> tuple[bool, str]:
-    """Starts a scan: via GitHub Actions in production (GITHUB_TOKEN + GITHUB_REPO set), else the
-    local launchd job."""
-    token, repo = os.environ.get("GITHUB_TOKEN"), os.environ.get("GITHUB_REPO")
-    if token and repo:
-        r = httpx.post(f"https://api.github.com/repos/{repo}/actions/workflows/scan.yml/dispatches",
-                       headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
-                       json={"ref": "main"}, timeout=20)
-        return r.status_code == 204, "" if r.status_code == 204 else f"GitHub {r.status_code}: {r.text[:200]}"
-    r = subprocess.run(["launchctl", "kickstart", f"gui/{os.getuid()}/{LAUNCHD_LABEL}"],
-                       capture_output=True, text=True)
-    return r.returncode == 0, r.stderr
+def start_scan(cfg: dict, target, notifier, busy: threading.Lock) -> bool:
+    """Scans in a background thread so the HTTP request returns at once. False if one is already
+    running in this process (other machines are kept out by the database lock)."""
+    from rentbot.main import default_runner, scan_once
+
+    if not busy.acquire(blocking=False):
+        return False
+
+    def work():
+        try:
+            scan_once(cfg, target, notifier, default_runner())
+        finally:
+            busy.release()
+
+    threading.Thread(target=work, daemon=True).start()
+    return True
 
 
-def serve(store: Store, cfg: dict, notifier=None, host: str | None = None, port: int | None = None) -> None:
+def serve(store: Store, cfg: dict, notifier=None, host: str | None = None, port: int | None = None,
+          scan_target=None) -> None:
     # Render sets PORT and needs 0.0.0.0; locally stay on localhost.
     host = host or ("0.0.0.0" if os.environ.get("PORT") else "127.0.0.1")
     port = port or int(os.environ.get("PORT", 8765))
     interval = cfg.get("loop_interval_seconds", 600)
     last_trigger = [0.0]
+    scanning = threading.Lock()
+    scan_token = os.environ.get("SCAN_TOKEN", "")
     if notifier is not None:
         threading.Thread(target=watchdog, args=(store, notifier, interval, cfg.get("watchdog_minutes", 60)),
                          daemon=True).start()
@@ -103,10 +107,16 @@ def serve(store: Store, cfg: dict, notifier=None, host: str | None = None, port:
                 wait = RUN_COOLDOWN_SECONDS - (time.time() - last_trigger[0])
                 if wait > 0:
                     return self._json(429, {"ok": False, "error": f"a run was just started; try again in {int(wait)}s"})
-                ok, err = trigger_run()
-                if ok:
-                    last_trigger[0] = time.time()
-                self._json(200 if ok else 500, {"ok": ok, "error": err})
+                if not start_scan(cfg, scan_target, notifier, scanning):
+                    return self._json(429, {"ok": False, "error": "a run is in progress"})
+                last_trigger[0] = time.time()
+                self._json(200, {"ok": True, "error": ""})
+            elif self.path == "/api/scan":  # the schedule: cron-job.org calls this every 10 min
+                auth = self.headers.get("Authorization", "")
+                if not scan_token or not hmac.compare_digest(auth, f"Bearer {scan_token}"):
+                    return self._json(401, {"error": "unauthorized"})
+                started = start_scan(cfg, scan_target, notifier, scanning)
+                self._json(202 if started else 409, {"started": started})
             else:
                 self._json(404, {"error": "not found"})
 

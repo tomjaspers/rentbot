@@ -185,13 +185,13 @@ function render() {
     <div class="tile"><div class="label">Last run</div><div class="value">${lastDone ? ago(lastDone.finished) : "never"}</div>
       <div class="sub">${lastStatus} ${lastDone ? time(lastDone.finished) : ""}</div></div>
     <div class="tile"><div class="label">Next run</div><div class="value">${running ? "now" : next ? (next * 1000 > Date.now() ? ago(next) : "due") : "–"}</div>
-      <div class="sub">every ${Math.round(state.interval_seconds / 60)} min while the laptop is awake</div></div>
+      <div class="sub">every ${Math.round(state.interval_seconds / 60)} min</div></div>
     <div class="tile"><div class="label">To review</div><div class="value">${counts.new}</div>
       <div class="sub">${counts.interested} looking into · ${counts.rejected} rejected</div></div>
     <div class="tile"><div class="label">Sources</div><div class="value">${failures.length ? failures.length + " failing" : "all OK"}</div>
       <div class="sub">${state.sources.length} enabled</div></div>`;
 
-  // Latest finished run per source (GitHub and the laptop scan different sources).
+  // Latest finished run per source (runners may scan different sources).
   const lastDetails = {};
   state.runs.filter(r => r.finished).forEach(r => Object.entries(r.details).forEach(([k, d]) => { if (!(k in lastDetails)) lastDetails[k] = d; }));
   document.getElementById("sources").innerHTML = state.sources.map(s => {

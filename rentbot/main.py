@@ -79,6 +79,21 @@ def run_once(cfg: dict, store: Store, notifier, http: Http, only: list[str] | No
         _run(cfg, store, notifier, http, only, runner)
 
 
+def scan_once(cfg: dict, target: str | Path, notifier, runner: str) -> None:
+    """One scan on its own connection, reporting crashes to the admin. Used by the dashboard, which
+    scans in a background thread when cron-job.org (or "Run now") asks it to."""
+    store = Store(target)
+    try:
+        run_once(cfg, store, notifier, Http(cfg["http"]["timeout_seconds"], tuple(cfg["http"]["detail_delay_seconds"])),
+                 runner=runner)
+    except Exception:
+        tb = traceback.format_exc()
+        log("run failed:\n" + tb)
+        notifier.alert_admin(f"run crashed on {runner}:\n{tb[-1500:]}")
+    finally:
+        store.db.close()
+
+
 def _run(cfg: dict, store: Store, notifier, http: Http, only: list[str] | None, runner: str) -> None:
     criteria = cfg["criteria"]
     chash = config_hash(cfg)
@@ -268,6 +283,11 @@ def db_target(sqlite_path: Path) -> str | Path:
     return os.environ.get("DATABASE_URL") or sqlite_path
 
 
+def default_runner() -> str:
+    """Name shown in run history: github | render | laptop."""
+    return "github" if os.environ.get("GITHUB_ACTIONS") else "render" if os.environ.get("RENDER") else "laptop"
+
+
 def cli() -> None:
     p = argparse.ArgumentParser(prog="rentbot")
     p.add_argument("command", choices=["run", "loop", "test-alert", "dashboard"])
@@ -276,7 +296,7 @@ def cli() -> None:
     p.add_argument("--db", type=Path, default=ROOT / "seen.db")
     p.add_argument("--sources", help="comma-separated sources to scan, overriding `enabled` in the config "
                                      "(e.g. the laptop runs --sources openrent)")
-    p.add_argument("--runner", default="github" if os.environ.get("GITHUB_ACTIONS") else "laptop",
+    p.add_argument("--runner", default=default_runner(),
                    help="name shown in run history and admin logs")
     args = p.parse_args()
     only = [s.strip() for s in args.sources.split(",")] if args.sources else None
@@ -289,7 +309,7 @@ def cli() -> None:
 
     if args.command == "dashboard":
         from rentbot.dashboard import serve
-        serve(Store(db_target(args.db)), cfg, notifier)
+        serve(Store(db_target(args.db)), cfg, notifier, scan_target=db_target(args.db))
         return
 
     if args.command == "test-alert":

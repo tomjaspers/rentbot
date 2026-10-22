@@ -2,7 +2,7 @@ criteria:
   postcode_districts: [BS3]   # listings that show some other district are dropped
   min_beds: 2
   max_beds: 2
-  max_price_pcm: 1750
+  max_price_pcm: 2000
   property_types: any         # or a list of words to match, e.g. [house, terraced, flat]
   garden: required            # required | preferred | ignore
   alert_on_balcony: true      # balcony only -> alert marked "maybe"
@@ -25,7 +25,7 @@ sources:
     enabled: true
     location: bs3
   openrent:
-    enabled: false   # blocks GitHub Actions IPs (405); its listings are also syndicated to Rightmove/OnTheMarket
+    enabled: true    # blocks GitHub Actions IPs (405), so only Render and the laptop scan it
     location: bristol-bs3
 
 http:
