@@ -107,7 +107,6 @@ def _run(cfg: dict, store: Store, notifier, http: Http, only: list[str] | None, 
     pending: list[tuple[Listing, str, str]] = []
     run_id = store.start_run(runner)
     details: dict[str, dict] = {}
-    rechecked: list[str] = []
 
     for name, cls in SOURCES.items():
         scfg = cfg["sources"].get(name) or {}
@@ -117,7 +116,6 @@ def _run(cfg: dict, store: Store, notifier, http: Http, only: list[str] | None, 
         rechecking = not seeding and store.get_meta(f"config_hash:{name}") != chash
         if rechecking:
             log(f"{name}: config/code changed: re-checking every listing quietly")
-            rechecked.append(name)
         source = cls(scfg, criteria)
         stats = details[name] = {"results": 0, "new": 0, "alerts": 0, "error": None, "detail_errors": 0}
         try:
@@ -166,7 +164,9 @@ def _run(cfg: dict, store: Store, notifier, http: Http, only: list[str] | None, 
 
             # The group only ever hears about a house once (plus real price drops).
             first_alert = store.alerted_with_fingerprint(fp)
-            if seeding or store.status_for_fingerprint(fp) == "rejected" or (first_alert and not dropped) \
+            # Rejected stays rejected, even after a price drop (which changes the fingerprint).
+            rejected = (row and row["status"] == "rejected") or store.status_for_fingerprint(fp) == "rejected"
+            if seeding or rejected or (first_alert and not dropped) \
                     or (row and row["matched"] and not dropped):
                 if seeding:
                     quiet_matches.setdefault(fp, listing)
@@ -210,14 +210,6 @@ def _run(cfg: dict, store: Store, notifier, http: Http, only: list[str] | None, 
         wake_dashboard(cfg["dashboard_url"])
     if cfg.get("heartbeat_hours"):
         maybe_send_heartbeat(store, notifier, cfg["heartbeat_hours"])
-
-    if any(d["new"] or d["alerts"] or d["error"] for d in details.values()) or rechecked:
-        recheck_note = f" (re-check of {', '.join(SOURCE_NAMES[n] for n in rechecked)})" if rechecked else ""
-        notifier.alert_admin(f"run {run_id} on {runner}{recheck_note}:\n" + "\n".join(
-            f"{SOURCE_NAMES[n]}: " + (f"error {d['error']}" if d["error"] else
-                                      f"{d['results']} results, {d['new']} new/changed, {d['alerts']} alerts")
-            for n, d in details.items()) + (f"\n{len(pending)} newly matching sent to the group" if pending else ""),
-            level="info")
 
 
 def wake_dashboard(url: str) -> None:

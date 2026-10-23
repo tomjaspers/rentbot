@@ -86,8 +86,14 @@ def test_group_only_gets_real_house_alerts(monkeypatch):
     run(store, rec, ["rightmove", "onthemarket"])  # nothing new: nothing anywhere
     assert len(rec.group) == 2
 
+    store.set_status(store.get("rightmove:2")["fingerprint"], "rejected")
+    rm_list[1].price_pcm = 1400  # price drop on a rejected house: stays quiet and rejected
+    run(store, rec, ["rightmove", "onthemarket"])
+    assert len(rec.group) == 2 and store.get("rightmove:2")["status"] == "rejected"
+    assert len(rec.admin) == 1  # only the first-run summary; no per-run logs
 
-def test_two_machines_split_sources_without_rechecking_each_other(monkeypatch):
+
+def test_two_machines_split_sources_without_rechecking_each_other(monkeypatch, capsys):
     rm, orent = fake_source("rightmove", [house("rightmove", "1")]), fake_source("openrent", [])
     monkeypatch.setattr(main, "SOURCES", {"rightmove": rm, "openrent": orent})
     store, rec = Store(Path(":memory:")), Recorder()
@@ -98,11 +104,11 @@ def test_two_machines_split_sources_without_rechecking_each_other(monkeypatch):
     main.run_once(cfg, store, rec, NoHttp(), only=["openrent"], runner="laptop")
     monkeypatch.setattr(main, "config_hash", lambda cfg: "github-code")
     main.run_once(cfg, store, rec, NoHttp(), runner="github")                    # first re-check of rightmove
-    rec.admin.clear()
+    capsys.readouterr()
     main.run_once(cfg, store, rec, NoHttp(), runner="github")
     monkeypatch.setattr(main, "config_hash", lambda cfg: "laptop-code")
     main.run_once(cfg, store, rec, NoHttp(), only=["openrent"], runner="laptop")
-    assert not any("re-check" in a for a in rec.admin)  # no ping-pong between code versions
+    assert "re-checking" not in capsys.readouterr().out  # no ping-pong between code versions
     runs = store.runs_since(0)
     assert [r["runner"] for r in runs] == ["github", "laptop", "github", "github", "laptop"]
     assert all(set(r["details"]) == ({"openrent"} if r["runner"] == "laptop" else {"rightmove"}) for r in runs)
