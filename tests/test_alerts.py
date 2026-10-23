@@ -1,7 +1,10 @@
+import time
+from datetime import datetime
 from pathlib import Path
 
 from rentbot import main
 from rentbot.models import Listing
+from rentbot.schedule import TZ, next_slot
 from rentbot.store import Store
 
 CRITERIA = {"postcode_districts": ["BS3"], "min_beds": 2, "max_beds": 2, "max_price_pcm": 1750,
@@ -105,15 +108,29 @@ def test_two_machines_split_sources_without_rechecking_each_other(monkeypatch):
     assert all(set(r["details"]) == ({"openrent"} if r["runner"] == "laptop" else {"rightmove"}) for r in runs)
 
 
-def test_heartbeat_every_third_run(monkeypatch):
+def test_heartbeat_twice_a_day(monkeypatch):
     monkeypatch.setattr(main, "SOURCES", {"rightmove": fake_source("rightmove", [])})
     store, rec = Store(Path(":memory:")), Recorder()
-    cfg = CFG | {"sources": {"rightmove": {"enabled": True}}, "heartbeat_every": 3}
-    for _ in range(4):
+    cfg = CFG | {"sources": {"rightmove": {"enabled": True}}}
+    for _ in range(3):
         main.run_once(cfg, store, rec, http=NoHttp())
+    t = time.time() + 3600  # the runs just now fall in the first heartbeat's 12 hours, not the second's
+    hour = datetime.fromtimestamp(t, TZ).hour
+    for now in (t, t + 600, t + 11 * 3600, t + 12 * 3600):
+        main.maybe_send_heartbeat(store, rec, [hour, (hour + 12) % 24], now=now)
     beats = [a for a in rec.admin if a.startswith("heartbeat")]
-    assert len(beats) == 1 and beats[0].startswith("heartbeat: 3 runs in the last hour (3 local; 0 failed)")
+    assert len(beats) == 2 and beats[0].startswith("heartbeat: 3 runs in the last 12h (3 local; 0 failed)")
+    assert beats[1].startswith("heartbeat: 0 runs in the last 12h")
     assert rec.group == []
+
+
+def test_schedule_slots():
+    sched = [{"hours": list(range(7, 23)), "minutes": [0, 10, 20, 30, 40, 50]}, {"hours": [2, 4], "minutes": [0]}]
+    at = lambda h, m: datetime(2026, 10, 23, h, m, tzinfo=TZ).timestamp()
+    assert next_slot(sched, at(9, 3)) == at(9, 10)
+    assert next_slot(sched, at(9, 10)) == at(9, 20)
+    assert next_slot(sched, at(22, 50)) == datetime(2026, 10, 24, 2, 0, tzinfo=TZ).timestamp()
+    assert next_slot(sched, at(4, 0)) == at(7, 0)
 
 
 def test_source_failure_goes_to_admin_once_then_recovery(monkeypatch):

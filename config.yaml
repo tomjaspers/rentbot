@@ -35,6 +35,13 @@ http:
   timeout_seconds: 20
 
 loop_interval_seconds: 600
-heartbeat_every: 3        # every Nth run, tell the admin how many runs happened in the last hour
+# When cron-job.org triggers scans, in UK time (one cron-job.org job per entry). After editing, push it
+# with `uv run python scripts/sync_schedule.py`.
+schedule:
+  - {name: day, hours: [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22],
+     minutes: [0, 10, 20, 30, 40, 50]}            # 07:00-22:50 every 10 min
+  - {name: evening/morning, hours: [6, 23], minutes: [0, 30]}   # 06:00, 06:30, 23:00, 23:30
+  - {name: night, hours: [2, 4], minutes: [0]}    # 02:00, 04:00
+heartbeat_hours: [8, 20]  # on the first run after these UK hours, tell the admin what happened since the last one
 dashboard_url: https://rentbot-dashboard.onrender.com   # linked in alerts; woken up when an alert goes out
-watchdog_minutes: 60      # admin alert when no scan has started for this long (GitHub schedules can lag)
+watchdog_minutes: 45      # admin alert when a scheduled scan is this many minutes overdue

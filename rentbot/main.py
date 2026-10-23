@@ -19,6 +19,7 @@ from rentbot.filters import basic_match, full_match
 from rentbot.http import Http
 from rentbot.models import Listing
 from rentbot.notify import SOURCE_NAMES, Telegram, format_listing
+from rentbot.schedule import last_boundary
 from rentbot.sources.bristolreslet import BristolResLet
 from rentbot.sources.onthemarket import OnTheMarket
 from rentbot.sources.openrent import OpenRent
@@ -207,9 +208,8 @@ def _run(cfg: dict, store: Store, notifier, http: Http, only: list[str] | None, 
     alerts_sent = sum(d["alerts"] for d in details.values()) + len(pending)
     if alerts_sent and cfg.get("dashboard_url"):
         wake_dashboard(cfg["dashboard_url"])
-    every = cfg.get("heartbeat_every")
-    if every and run_id % every == 0:
-        send_heartbeat(store, notifier)
+    if cfg.get("heartbeat_hours"):
+        maybe_send_heartbeat(store, notifier, cfg["heartbeat_hours"])
 
     if any(d["new"] or d["alerts"] or d["error"] for d in details.values()) or rechecked:
         recheck_note = f" (re-check of {', '.join(SOURCE_NAMES[n] for n in rechecked)})" if rechecked else ""
@@ -230,8 +230,16 @@ def wake_dashboard(url: str) -> None:
         pass
 
 
-def send_heartbeat(store: Store, notifier) -> None:
-    runs = store.runs_since(time.time() - 3600)
+def maybe_send_heartbeat(store: Store, notifier, hours: list[int], now: float | None = None) -> None:
+    """On the first run after each of `hours` (UK time), tells the admin what happened since the last
+    heartbeat."""
+    now = now or time.time()
+    last = float(store.get_meta("last_heartbeat") or 0)
+    if last >= last_boundary(hours, now):
+        return
+    store.set_meta("last_heartbeat", str(now))
+    since = last or now - 12 * 3600
+    runs = store.runs_since(since)
     done = [r for r in runs if r["finished"]]
     failed = [r for r in done if not r["ok"]]
     alerts = sum(d.get("alerts", 0) for r in runs for d in r["details"].values())
@@ -240,7 +248,7 @@ def send_heartbeat(store: Store, notifier) -> None:
     for r in done:
         results |= {n: d.get("results") for n, d in r["details"].items()}
     notifier.alert_admin(
-        f"heartbeat: {len(done)} runs in the last hour ({', '.join(f'{n} {k}' for k, n in by_runner.items())}; "
+        f"heartbeat: {len(done)} runs in the last {round((now - since) / 3600)}h ({', '.join(f'{n} {k}' for k, n in by_runner.items())}; "
         f"{len(failed)} failed), {alerts} group alerts. "
         f"Latest results: " + ", ".join(f"{SOURCE_NAMES.get(n, n)} {c}" for n, c in results.items()),
         level="info")

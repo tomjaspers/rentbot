@@ -1,4 +1,4 @@
-# Render Blueprint: the dashboard, which also scans when cron-job.org calls /api/scan every 10 min
+# Render Blueprint: the dashboard, which also scans when cron-job.org calls /api/scan (see schedule in config.yaml)
 # (the calls also keep the free instance awake).
 services:
   - type: web

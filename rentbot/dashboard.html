@@ -172,7 +172,6 @@ function render() {
   const last = state.runs[0];
   const lastDone = state.runs.find(r => r.finished);
   const running = last && !last.finished && (Date.now() / 1000 - last.started) < 900;
-  const next = lastDone ? lastDone.started + state.interval_seconds : null;
   const failures = state.sources.filter(s => s.consecutive_failures > 0);
   const counts = { new: 0, interested: 0, rejected: 0 };
   state.listings.forEach(l => counts[l.status] = (counts[l.status] || 0) + 1);
@@ -184,8 +183,8 @@ function render() {
   document.getElementById("status").innerHTML = `
     <div class="tile"><div class="label">Last run</div><div class="value">${lastDone ? ago(lastDone.finished) : "never"}</div>
       <div class="sub">${lastStatus} ${lastDone ? time(lastDone.finished) : ""}</div></div>
-    <div class="tile"><div class="label">Next run</div><div class="value">${running ? "now" : next ? (next * 1000 > Date.now() ? ago(next) : "due") : "–"}</div>
-      <div class="sub">every ${Math.round(state.interval_seconds / 60)} min</div></div>
+    <div class="tile"><div class="label">Next run</div><div class="value">${running ? "now" : ago(state.next_run)}</div>
+      <div class="sub">${time(state.next_run)}</div></div>
     <div class="tile"><div class="label">To review</div><div class="value">${counts.new}</div>
       <div class="sub">${counts.interested} looking into · ${counts.rejected} rejected</div></div>
     <div class="tile"><div class="label">Sources</div><div class="value">${failures.length ? failures.length + " failing" : "all OK"}</div>

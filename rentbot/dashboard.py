@@ -6,12 +6,13 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from rentbot.schedule import next_slot
 from rentbot.store import Store
 
 PAGE = Path(__file__).with_name("dashboard.html")
 
 
-def watchdog(store: Store, notifier, interval: int, max_gap_minutes: int, check_every: int = 300) -> None:
+def watchdog(store: Store, notifier, schedule: list[dict], max_late_minutes: int, check_every: int = 300) -> None:
     """Alerts the admin when scheduled runs stop happening or one hangs. The condition must hold on
     two checks in a row, so waking the laptop from sleep (launchd catches up within a minute) is quiet."""
     strikes, alerted = 0, False
@@ -25,8 +26,10 @@ def watchdog(store: Store, notifier, interval: int, max_gap_minutes: int, check_
                 problem = "no runs recorded yet"
             elif not run["finished"] and now - run["started"] > 1800:
                 problem = f"run {run['id']} started {int((now - run['started']) / 60)} min ago and hasn't finished"
-            elif now - run["started"] > max_gap_minutes * 60:
-                problem = f"no run for {int((now - run['started']) / 60)} min (expected every {interval // 60})"
+            elif now - next_slot(schedule, run["started"]) > max_late_minutes * 60:
+                due = next_slot(schedule, run["started"])
+                problem = (f"no run for {int((now - run['started']) / 60)} min "
+                           f"(one was due {int((now - due) / 60)} min ago)")
         except Exception as e:
             problem = f"dashboard can't read the database: {e!r}"
         strikes = strikes + 1 if problem else 0
@@ -64,12 +67,11 @@ def serve(store: Store, cfg: dict, notifier=None, host: str | None = None, port:
     # Render sets PORT and needs 0.0.0.0; locally stay on localhost.
     host = host or ("0.0.0.0" if os.environ.get("PORT") else "127.0.0.1")
     port = port or int(os.environ.get("PORT", 8765))
-    interval = cfg.get("loop_interval_seconds", 600)
     last_trigger = [0.0]
     scanning = threading.Lock()
     scan_token = os.environ.get("SCAN_TOKEN", "")
     if notifier is not None:
-        threading.Thread(target=watchdog, args=(store, notifier, interval, cfg.get("watchdog_minutes", 60)),
+        threading.Thread(target=watchdog, args=(store, notifier, cfg["schedule"], cfg.get("watchdog_minutes", 45)),
                          daemon=True).start()
 
     class Handler(BaseHTTPRequestHandler):
@@ -88,7 +90,7 @@ def serve(store: Store, cfg: dict, notifier=None, host: str | None = None, port:
                 self._send(200, PAGE.read_bytes(), "text/html; charset=utf-8")
             elif self.path == "/api/state":
                 state = store.dashboard_state()
-                state["interval_seconds"] = interval
+                state["next_run"] = next_slot(cfg["schedule"], time.time())
                 state["criteria"] = cfg["criteria"]
                 state["walk_to"] = cfg.get("walk_to")
                 self._json(200, state)
