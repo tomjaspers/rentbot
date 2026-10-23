@@ -113,7 +113,7 @@ def serve(store: Store, cfg: dict, notifier=None, host: str | None = None, port:
                     return self._json(429, {"ok": False, "error": "a run is in progress"})
                 last_trigger[0] = time.time()
                 self._json(200, {"ok": True, "error": ""})
-            elif self.path == "/api/scan":  # the schedule: cron-job.org calls this every 10 min
+            elif self.path == "/api/scan":  # cron-job.org calls this on the schedule in config.yaml
                 auth = self.headers.get("Authorization", "")
                 if not scan_token or not hmac.compare_digest(auth, f"Bearer {scan_token}"):
                     return self._json(401, {"error": "unauthorized"})
