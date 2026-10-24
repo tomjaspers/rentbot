@@ -61,6 +61,16 @@ RUN_COLUMNS = {
 
 STATUSES = ("new", "interested", "rejected")
 
+SCAN_COLUMNS = "key, fingerprint, price_pcm, matched, status, criteria_hash"
+
+# Listing text only used to classify it during a scan (a re-check fetches it again). Left out of
+# `data` because every dashboard load would transfer it from the database for nothing.
+UNSTORED_FIELDS = ("description", "summary", "features")
+
+
+def stored_data(l: Listing) -> dict:
+    return {k: v for k, v in l.to_dict().items() if k not in UNSTORED_FIELDS}
+
 
 class Db:
     """Minimal adapter so the same SQL (written with ? placeholders) runs on SQLite (local) and
@@ -167,9 +177,12 @@ class Store:
         return self.db.one("select 1 as x from listings limit 1") is None
 
     def get(self, key: str) -> dict | None:
-        """Only what a scan compares against (not the `data` JSON): it's called for every result."""
-        return self.db.one("select key, fingerprint, price_pcm, matched, status, criteria_hash from listings where key = ?",
-                           (key,))
+        return self.db.one(f"select {SCAN_COLUMNS} from listings where key = ?", (key,))
+
+    def for_source(self, source: str) -> dict[str, dict]:
+        """Every stored listing of a source, keyed by listing key: one query per scan instead of one
+        per result. Only what a scan compares against, not the `data` JSON."""
+        return {r["key"]: r for r in self.db.all(f"select {SCAN_COLUMNS} from listings where source = ?", (source,))}
 
     def alerted_with_fingerprint(self, fp: str) -> dict | None:
         """The row whose group alert first announced this house, if any."""
@@ -214,11 +227,13 @@ class Store:
                    criteria_hash=excluded.criteria_hash""",
             (l.key, l.source, fp, l.url, l.address, l.price_pcm, int(matched), reason, message_id, now, now,
              l.beds, l.property_type, l.agent, l.image, l.garden, l.garden_reason,
-             self.status_for_fingerprint(fp), json.dumps(l.to_dict()), criteria_hash),
+             self.status_for_fingerprint(fp), json.dumps(stored_data(l)), criteria_hash),
         )
 
-    def touch(self, key: str) -> None:
-        self.db.run("update listings set last_seen = ? where key = ?", (time.time(), key))
+    def touch(self, keys: list[str]) -> None:
+        if keys:
+            self.db.run(f"update listings set last_seen = ? where key in ({', '.join('?' * len(keys))})",
+                        (time.time(), *keys))
 
     def set_status(self, fingerprint: str, status: str) -> int:
         """Applies to every copy of the house (same fingerprint) across sites."""
@@ -276,15 +291,15 @@ class Store:
         runs = [dict(r) | {"details": json.loads(r["details"] or "{}")}
                 for r in self.db.all("select * from runs order by id desc limit ?", (run_limit,))]
         sources = self.db.all("select * from source_status order by source")
-        rows = self.db.all("select * from listings where matched = 1 order by first_seen desc")
+        # The other listing columns duplicate fields in `data`.
+        rows = self.db.all("""select fingerprint, source, url, image, status, first_seen, last_seen, data
+                              from listings where matched = 1 order by first_seen desc""")
         groups: dict[str, dict] = {}
         for r in rows:  # one card per house, with a link per site it appears on
             g = groups.get(r["fingerprint"])
             if g is None:
-                data = json.loads(r["data"] or "{}")
-                data.pop("description", None)  # long; not shown on the dashboard
-                g = groups[r["fingerprint"]] = data | dict(r) | {"links": []}
-                g.pop("data", None)
+                data = {k: v for k, v in json.loads(r.pop("data") or "{}").items() if k not in UNSTORED_FIELDS}
+                g = groups[r["fingerprint"]] = data | r | {"links": []}
             g["links"].append({"source": r["source"], "url": r["url"]})
             g["first_seen"] = min(g["first_seen"], r["first_seen"])
             g["last_seen"] = max(g["last_seen"], r["last_seen"])

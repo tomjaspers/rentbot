@@ -132,14 +132,16 @@ def _run(cfg: dict, store: Store, notifier, http: Http, only: list[str] | None, 
             notifier.alert_admin(f"{SOURCE_NAMES[name]} is working again.")
         store.record_success(name)
         stats["results"] = len(results)
+        known = store.for_source(name)
+        unchanged = []
 
         for listing in results:
             fp = fingerprint(listing)
-            row = store.get(listing.key)
+            row = known.get(listing.key)
             headline = "New match"
             dropped = bool(row and row["price_pcm"] and listing.price_pcm and listing.price_pcm < row["price_pcm"])
             if row and not dropped and row["criteria_hash"] == chash:
-                store.touch(listing.key)
+                unchanged.append(listing.key)
                 continue
             if dropped:
                 headline = f"Price drop (was £{row['price_pcm']:,})"
@@ -183,6 +185,7 @@ def _run(cfg: dict, store: Store, notifier, http: Http, only: list[str] | None, 
             log(f"{name}: ALERT {listing.address} £{listing.price_pcm} score={listing.score}")
             stats["alerts"] += 1
             store.save(listing, fp, True, message_id=msg_id, criteria_hash=chash)
+        store.touch(unchanged)
         log(f"{name}: {len(results)} results, {stats['new']} new/changed")
 
     if pending:

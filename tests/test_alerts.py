@@ -2,7 +2,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from rentbot import main
+from rentbot import dashboard, main
 from rentbot.models import Listing
 from rentbot.schedule import TZ, next_slot
 from rentbot.store import Store
@@ -91,6 +91,34 @@ def test_group_only_gets_real_house_alerts(monkeypatch):
     run(store, rec, ["rightmove", "onthemarket"])
     assert len(rec.group) == 2 and store.get("rightmove:2")["status"] == "rejected"
     assert len(rec.admin) == 1  # only the first-run summary; no per-run logs
+
+
+def test_dashboard_groups_houses_and_skips_long_text(monkeypatch):
+    rm_list = [house("rightmove", "1")]
+    otm_list = [house("onthemarket", "9", "Exmoor Street, Bristol BS3")]
+    monkeypatch.setattr(main, "SOURCES", {"rightmove": fake_source("rightmove", rm_list),
+                                          "onthemarket": fake_source("onthemarket", otm_list)})
+    store, rec = Store(Path(":memory:")), Recorder()
+    run(store, rec, ["rightmove", "onthemarket"])
+    seen = store.db.one("select last_seen from listings where key = 'rightmove:1'")["last_seen"]
+    run(store, rec, ["rightmove", "onthemarket"])  # unchanged listings only get last_seen bumped
+    assert store.db.one("select last_seen from listings where key = 'rightmove:1'")["last_seen"] > seen
+
+    [card] = store.dashboard_state()["listings"]
+    assert card["address"].startswith("Exmoor Street") and card["garden"] == "yes"
+    assert [l["source"] for l in card["links"]] == ["onthemarket", "rightmove"]
+    assert not {"description", "summary", "features", "data"} & card.keys()
+
+
+def test_watchdog_reads_run_history_only_to_confirm_a_problem():
+    sched = [{"hours": list(range(24)), "minutes": [0, 15, 30, 45]}]
+    store = Store(Path(":memory:"))
+    now = time.time()
+    assert dashboard.database_problem(store, sched, 45, now) == "no runs recorded yet"
+    run_id = store.start_run("render")
+    store.finish_run(run_id, True, {})
+    assert dashboard.database_problem(store, sched, 45, now) is None
+    assert dashboard.database_problem(store, sched, 45, now + 3 * 3600).startswith("no run for 1")
 
 
 def test_two_machines_split_sources_without_rechecking_each_other(monkeypatch, capsys):
