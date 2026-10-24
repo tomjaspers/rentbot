@@ -42,6 +42,7 @@ def watchdog(store: Store, notifier, schedule: list[dict], max_late_minutes: int
 
 
 RUN_COOLDOWN_SECONDS = 120  # the dashboard has no password, so don't let anyone spam runs
+STATE_CACHE_SECONDS = 60    # scans are at most every 10 min, so a minute-old state is fine
 
 
 def start_scan(cfg: dict, target, notifier, busy: threading.Lock) -> bool:
@@ -70,6 +71,13 @@ def serve(store: Store, cfg: dict, notifier=None, host: str | None = None, port:
     last_trigger = [0.0]
     scanning = threading.Lock()
     scan_token = os.environ.get("SCAN_TOKEN", "")
+    cache: list = [None, 0.0]  # (state, fetched at): every Neon byte read counts against the transfer quota
+
+    def cached_state() -> dict:
+        if time.time() - cache[1] > STATE_CACHE_SECONDS:
+            cache[0], cache[1] = store.dashboard_state(), time.time()
+        return dict(cache[0])
+
     if notifier is not None:
         threading.Thread(target=watchdog, args=(store, notifier, cfg["schedule"], cfg.get("watchdog_minutes", 45)),
                          daemon=True).start()
@@ -88,8 +96,10 @@ def serve(store: Store, cfg: dict, notifier=None, host: str | None = None, port:
         def do_GET(self):
             if self.path in ("/", "/index.html"):
                 self._send(200, PAGE.read_bytes(), "text/html; charset=utf-8")
+            elif self.path == "/healthz":  # Render health checks and wake-ups: never touches the database
+                self._json(200, {"ok": True})
             elif self.path == "/api/state":
-                state = store.dashboard_state()
+                state = cached_state()
                 state["next_run"] = next_slot(cfg["schedule"], time.time())
                 state["criteria"] = cfg["criteria"]
                 state["walk_to"] = cfg.get("walk_to")
@@ -104,6 +114,7 @@ def serve(store: Store, cfg: dict, notifier=None, host: str | None = None, port:
                     n = store.set_status(body["fingerprint"], body["status"])
                 except (KeyError, ValueError) as e:
                     return self._json(400, {"error": repr(e)})
+                cache[1] = 0.0
                 self._json(200, {"updated": n})
             elif self.path == "/api/run":
                 wait = RUN_COOLDOWN_SECONDS - (time.time() - last_trigger[0])

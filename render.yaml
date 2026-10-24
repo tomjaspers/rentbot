@@ -8,7 +8,7 @@ services:
     region: frankfurt          # next to the Neon database (eu-central-1)
     buildCommand: pip install uv && uv sync --frozen --no-dev
     startCommand: uv run --frozen --no-dev rentbot dashboard
-    healthCheckPath: /api/state
+    healthCheckPath: /healthz   # not /api/state: health checks run every few seconds and would query Neon each time
     envVars:
       - key: PYTHON_VERSION
         value: 3.13.13

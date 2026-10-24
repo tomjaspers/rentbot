@@ -137,6 +137,12 @@ def test_schedule_slots():
     assert next_slot(sched, at(9, 10)) == at(9, 20)
     assert next_slot(sched, at(22, 50)) == datetime(2026, 10, 24, 2, 0, tzinfo=TZ).timestamp()
     assert next_slot(sched, at(4, 0)) == at(7, 0)
+    weekend = [{"hours": [9], "minutes": [0, 30], "wdays": [1, 2, 3, 4, 5]},
+               {"hours": [9, 10], "minutes": [0], "wdays": [0, 6]}]
+    sat = lambda h, m: datetime(2026, 10, 24, h, m, tzinfo=TZ).timestamp()  # 2026-10-23 is a Friday
+    assert next_slot(weekend, at(9, 0)) == at(9, 30)
+    assert next_slot(weekend, sat(9, 0)) == sat(10, 0)
+    assert next_slot(weekend, sat(10, 0)) == datetime(2026, 10, 25, 9, 0, tzinfo=TZ).timestamp()
 
 
 def test_source_failure_goes_to_admin_once_then_recovery(monkeypatch):

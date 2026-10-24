@@ -342,7 +342,9 @@ document.addEventListener("click", async e => {
 });
 
 load();
-setInterval(load, 30000);
+// Only refresh while the tab is visible: a forgotten background tab would otherwise poll all day.
+setInterval(() => { if (!document.hidden) load(); }, 60000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
 </script>
 </body>
 </html>

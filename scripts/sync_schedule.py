@@ -38,7 +38,7 @@ template = call("GET", f"/jobs/{jobs[0]['jobId']}").json()["jobDetails"]
 for i, entry in enumerate(schedule):
     job = {"title": f"{PREFIX} {entry['name']}", "enabled": True,
            "schedule": {"timezone": "Europe/London", "hours": entry["hours"], "minutes": entry["minutes"],
-                        "mdays": [-1], "months": [-1], "wdays": [-1], "expiresAt": 0}}
+                        "mdays": [-1], "months": [-1], "wdays": entry.get("wdays", [-1]), "expiresAt": 0}}
     if i < len(jobs):
         call("PATCH", f"/jobs/{jobs[i]['jobId']}", json={"job": job})
         print(f"updated {jobs[i]['jobId']}: {job['title']}")

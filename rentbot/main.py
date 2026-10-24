@@ -217,7 +217,7 @@ def wake_dashboard(url: str) -> None:
     alert goes out means it's awake by the time someone taps through. Starting the wake-up only needs
     the request to arrive, so a short timeout is fine."""
     try:
-        httpx.get(url.rstrip("/") + "/api/state", timeout=5)
+        httpx.get(url.rstrip("/") + "/healthz", timeout=5)
     except httpx.HTTPError:
         pass
 

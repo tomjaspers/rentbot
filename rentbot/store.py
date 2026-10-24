@@ -167,7 +167,9 @@ class Store:
         return self.db.one("select 1 as x from listings limit 1") is None
 
     def get(self, key: str) -> dict | None:
-        return self.db.one("select * from listings where key = ?", (key,))
+        """Only what a scan compares against (not the `data` JSON): it's called for every result."""
+        return self.db.one("select key, fingerprint, price_pcm, matched, status, criteria_hash from listings where key = ?",
+                           (key,))
 
     def alerted_with_fingerprint(self, fp: str) -> dict | None:
         """The row whose group alert first announced this house, if any."""
@@ -177,7 +179,7 @@ class Store:
         )
 
     def rows_for_fingerprint(self, fp: str) -> list[dict]:
-        return self.db.all("select * from listings where fingerprint = ? order by first_seen", (fp,))
+        return self.db.all("select key, source, url from listings where fingerprint = ? order by first_seen", (fp,))
 
     def fingerprints_for_message(self, message_id: int) -> int:
         row = self.db.one("select count(distinct fingerprint) as n from listings where message_id = ?", (message_id,))
@@ -263,7 +265,7 @@ class Store:
                 for r in self.db.all("select * from runs where started >= ? order by id", (ts,))]
 
     def last_run(self) -> dict | None:
-        return self.db.one("select * from runs order by id desc limit 1")
+        return self.db.one("select id, started, finished, ok from runs order by id desc limit 1")
 
     def mark_warned(self, source: str) -> None:
         self.db.run("update source_status set warned = 1 where source = ?", (source,))
