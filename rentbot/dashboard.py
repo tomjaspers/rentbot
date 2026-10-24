@@ -65,7 +65,7 @@ def database_problem(store: Store, schedule: list[dict], max_late_minutes: int, 
     return None
 
 
-def start_scan(cfg: dict, target, notifier, busy: threading.Lock, activity: Activity, on_done=None) -> bool:
+def start_scan(cfg: dict, store: Store, notifier, busy: threading.Lock, activity: Activity, on_done=None) -> bool:
     """Scans in a background thread so the HTTP request returns at once. False if one is already
     running in this process (other machines are kept out by the database lock)."""
     from rentbot.main import default_runner, scan_once
@@ -77,7 +77,7 @@ def start_scan(cfg: dict, target, notifier, busy: threading.Lock, activity: Acti
     def work():
         activity.started = time.time()
         try:
-            scan_once(cfg, target, notifier, default_runner())
+            scan_once(cfg, store, notifier, default_runner())
         finally:
             activity.started = None
             busy.release()
@@ -88,8 +88,7 @@ def start_scan(cfg: dict, target, notifier, busy: threading.Lock, activity: Acti
     return True
 
 
-def serve(store: Store, cfg: dict, notifier=None, host: str | None = None, port: int | None = None,
-          scan_target=None) -> None:
+def serve(store: Store, cfg: dict, notifier=None, host: str | None = None, port: int | None = None) -> None:
     # Render sets PORT and needs 0.0.0.0; locally stay on localhost.
     host = host or ("0.0.0.0" if os.environ.get("PORT") else "127.0.0.1")
     port = port or int(os.environ.get("PORT", 8765))
@@ -115,7 +114,7 @@ def serve(store: Store, cfg: dict, notifier=None, host: str | None = None, port:
         cached[0] = (0.0, b"", "")
 
     def scan() -> bool:
-        return start_scan(cfg, scan_target, notifier, scanning, activity, on_done=invalidate)
+        return start_scan(cfg, store, notifier, scanning, activity, on_done=invalidate)
 
     if notifier is not None:
         threading.Thread(target=watchdog, daemon=True,
@@ -160,11 +159,12 @@ def serve(store: Store, cfg: dict, notifier=None, host: str | None = None, port:
                 self._json(404, {"error": "not found"})
 
         def do_POST(self):
-            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+            raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
             if self.path == "/api/status":
                 try:
+                    body = json.loads(raw)
                     n = store.set_status(body["fingerprint"], body["status"])
-                except (KeyError, ValueError) as e:
+                except (KeyError, TypeError, ValueError) as e:  # ValueError covers bad JSON
                     return self._json(400, {"error": repr(e)})
                 invalidate()
                 self._json(200, {"updated": n})

@@ -110,6 +110,22 @@ def test_dashboard_groups_houses_and_skips_long_text(monkeypatch):
     assert not {"description", "summary", "features", "data"} & card.keys()
 
 
+def test_crashed_run_is_still_marked_finished(monkeypatch):
+    rm_list = [house("rightmove", "0", "Raymend Road, BS3")]
+    monkeypatch.setattr(main, "SOURCES", {"rightmove": fake_source("rightmove", rm_list)})
+    store, rec = Store(Path(":memory:")), Recorder()
+    run(store, rec, ["rightmove"])  # first run: recorded quietly
+    rm_list.append(house("rightmove", "1"))
+    monkeypatch.setattr(rec, "send_listing", lambda *a: (_ for _ in ()).throw(RuntimeError("telegram down")))
+    try:
+        run(store, rec, ["rightmove"])
+    except RuntimeError:
+        pass
+    last = store.last_run()
+    assert last["finished"] and last["ok"] == 0
+    assert store.get("rightmove:1") is None  # not stored, so the alert is retried next run
+
+
 def test_watchdog_reads_run_history_only_to_confirm_a_problem():
     sched = [{"hours": list(range(24)), "minutes": [0, 15, 30, 45]}]
     store = Store(Path(":memory:"))

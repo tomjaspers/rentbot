@@ -50,7 +50,7 @@ def parse_search(html: str) -> list[Listing]:
                 beds=p.get("bedrooms"),
                 property_type=p.get("humanised-property-type") or "",
                 agent=(p.get("agent") or {}).get("name") or "",
-                image=cover.get("default") or cover.get("webp") or "" if isinstance(cover, dict) else "",
+                image=(cover.get("default") or cover.get("webp") or "") if isinstance(cover, dict) else "",
                 features=list(p.get("features") or []),
                 lat=loc.get("lat"),
                 lng=loc.get("lon"),

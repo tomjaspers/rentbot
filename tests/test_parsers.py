@@ -167,3 +167,14 @@ def test_material_facts_lift_access_no_is_not_modern():
     from rentbot.enrich import classify_age
     l = Listing("x", "1", "", "", 1500, 2, description="Building Material type – Brick – Lift access – no")
     assert classify_age(l)[0] == "unknown"
+
+
+def test_listings_without_photos_still_parse():
+    letting = {"status": "To Let", "price": 1500}
+    feed = {"data": [{"streetId": "a1", "publicAddress": "Exmoor Street, BS3", "bedrooms": 2,
+                      "lettingsListing": letting, "media": []}]}
+    assert bristolreslet.parse_search(feed)[0].image == ""
+    otm = {"props": {"pageProps": {"initialReduxState": {"results": {"list": [
+        {"id": 1, "details-url": "/details/1/", "price": "£1,500 pcm", "cover-image": "missing"}]}}}}}
+    html = f'<script id="__NEXT_DATA__" type="application/json">{json.dumps(otm)}</script>'
+    assert onthemarket.parse_search(html)[0].image == ""

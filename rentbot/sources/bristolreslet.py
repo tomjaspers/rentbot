@@ -69,7 +69,7 @@ def parse_search(data: dict) -> list[Listing]:
                 beds=p.get("bedrooms"),
                 property_type=" ".join(filter(None, [p.get("style"), p.get("type")])),
                 agent=AGENT,
-                image=media[0].get("thumbnail") or media[0].get("url") or "" if media else "",
+                image=(media[0].get("thumbnail") or media[0].get("url") or "") if media else "",
                 summary=letting.get("shortDescription") or "",
                 lat=addr.get("latitude"),
                 lng=addr.get("longitude"),

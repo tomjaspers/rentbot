@@ -1,6 +1,6 @@
 #!/bin/sh
-# Turn the laptop's OpenRent worker on or off. It shares the Neon database with GitHub Actions and
-# takes turns with it via a database lock, so both can run at the same time safely.
+# Turn the laptop's OpenRent worker on or off. It shares the Neon database with the Render dashboard's
+# scans and takes turns with them via a database lock, so both can run at the same time safely.
 #   scripts/laptop.sh on | off | status
 set -eu
 LABEL=com.tjaspers.rentbot.openrent

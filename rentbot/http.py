@@ -24,8 +24,10 @@ class Http:
                 r = self.client.get(url, params=params)
                 r.raise_for_status()
                 return r.text
-            except httpx.HTTPError:
-                if attempt == retries:
+            except httpx.HTTPError as e:
+                permanent = isinstance(e, httpx.HTTPStatusError) and e.response.status_code < 500 \
+                    and e.response.status_code != 429  # e.g. 404, or 405 when a site blocks us
+                if attempt == retries or permanent:
                     raise
                 time.sleep(5 * 2**attempt)
         raise AssertionError("unreachable")

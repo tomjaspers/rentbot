@@ -82,19 +82,19 @@ def run_once(cfg: dict, store: Store, notifier, http: Http, only: list[str] | No
         _run(cfg, store, notifier, http, only, runner)
 
 
-def scan_once(cfg: dict, target: str | Path, notifier, runner: str) -> None:
-    """One scan on its own connection, reporting crashes to the admin. Used by the dashboard, which
-    scans in a background thread when cron-job.org (or "Run now") asks it to."""
-    store = Store(target)
+def make_http(cfg: dict) -> Http:
+    return Http(cfg["http"]["timeout_seconds"], tuple(cfg["http"]["detail_delay_seconds"]))
+
+
+def scan_once(cfg: dict, store: Store, notifier, runner: str) -> None:
+    """One scan, reporting crashes to the admin. Used by the dashboard, which scans in a background
+    thread on its own (thread-safe) store when cron-job.org (or "Run now") asks it to."""
     try:
-        run_once(cfg, store, notifier, Http(cfg["http"]["timeout_seconds"], tuple(cfg["http"]["detail_delay_seconds"])),
-                 runner=runner)
+        run_once(cfg, store, notifier, make_http(cfg), runner=runner)
     except Exception:
         tb = traceback.format_exc()
         log("run failed:\n" + tb)
         notifier.alert_admin(f"run crashed on {runner}:\n{tb[-1500:]}")
-    finally:
-        store.db.close()
 
 
 def _run(cfg: dict, store: Store, notifier, http: Http, only: list[str] | None, runner: str) -> None:
@@ -107,112 +107,132 @@ def _run(cfg: dict, store: Store, notifier, http: Http, only: list[str] | None, 
     pending: list[tuple[Listing, str, str]] = []
     run_id = store.start_run(runner)
     details: dict[str, dict] = {}
+    try:
+        for name, cls in SOURCES.items():
+            scfg = cfg["sources"].get(name) or {}
+            if name in only if only else scfg.get("enabled"):
+                _scan_source(name, cls(scfg, criteria), cfg, store, notifier, http, chash, seeding,
+                             details.setdefault(name, new_stats()), quiet_matches, pending)
+        if pending:
+            send_pending(store, notifier, pending, chash)
+    except BaseException:
+        store.finish_run(run_id, False, details)  # or it would show as running forever
+        raise
+    _report(notifier, details, quiet_matches if seeding else None)
+    for n, d in details.items():
+        if not d["error"]:
+            store.set_meta(f"config_hash:{n}", chash)
+    store.finish_run(run_id, all(not d["error"] for d in details.values()), details)
 
-    for name, cls in SOURCES.items():
-        scfg = cfg["sources"].get(name) or {}
-        if not (name in only if only else scfg.get("enabled")):
+    alerts_sent = sum(d["alerts"] for d in details.values()) + len(pending)
+    if alerts_sent and cfg.get("dashboard_url") and runner != "render":  # a Render scan runs in the dashboard
+        wake_dashboard(cfg["dashboard_url"])
+    if cfg.get("heartbeat_hours"):
+        maybe_send_heartbeat(store, notifier, cfg["heartbeat_hours"])
+
+
+def new_stats() -> dict:
+    return {"results": 0, "new": 0, "alerts": 0, "error": None, "detail_errors": 0}
+
+
+def _search(name: str, source, store: Store, notifier, http: Http, stats: dict) -> list[Listing] | None:
+    """Runs a source's search and tracks its health: the admin hears once when it starts failing and
+    once when it recovers. None when it failed."""
+    try:
+        results = source.search(http)
+    except Exception as e:
+        log(f"{name}: search failed: {e!r}")
+        stats["error"] = repr(e)[:300]
+        if not store.record_failure(name, repr(e))["warned"]:
+            notifier.alert_admin(f"{SOURCE_NAMES[name]} search failed: {e!r}")
+            store.mark_warned(name)
+        return None
+    if (store.get_source_status(name) or {}).get("warned"):
+        notifier.alert_admin(f"{SOURCE_NAMES[name]} is working again.")
+    store.record_success(name)
+    stats["results"] = len(results)
+    return results
+
+
+def _scan_source(name: str, source, cfg: dict, store: Store, notifier, http: Http, chash: str, seeding: bool,
+                 stats: dict, quiet_matches: dict[str, Listing], pending: list[tuple[Listing, str, str]]) -> None:
+    criteria = cfg["criteria"]
+    # Tracked per source: each source is scanned by one machine, whose code version may differ.
+    rechecking = not seeding and store.get_meta(f"config_hash:{name}") != chash
+    if rechecking:
+        log(f"{name}: config/code changed: re-checking every listing quietly")
+    results = _search(name, source, store, notifier, http, stats)
+    if results is None:
+        return
+    known = store.for_source(name)
+    unchanged = []
+
+    for listing in results:
+        fp = fingerprint(listing)
+        row = known.get(listing.key)
+        headline = "New match"
+        dropped = bool(row and row["price_pcm"] and listing.price_pcm and listing.price_pcm < row["price_pcm"])
+        if row and not dropped and row["criteria_hash"] == chash:
+            unchanged.append(listing.key)
             continue
-        # Tracked per source: each source is scanned by one machine, whose code version may differ.
-        rechecking = not seeding and store.get_meta(f"config_hash:{name}") != chash
-        if rechecking:
-            log(f"{name}: config/code changed: re-checking every listing quietly")
-        source = cls(scfg, criteria)
-        stats = details[name] = {"results": 0, "new": 0, "alerts": 0, "error": None, "detail_errors": 0}
-        try:
-            results = source.search(http)
-        except Exception as e:
-            log(f"{name}: search failed: {e!r}")
-            stats["error"] = repr(e)[:300]
-            status = store.record_failure(name, repr(e))
-            if not status["warned"]:  # once per outage; a recovery message follows
-                notifier.alert_admin(f"{SOURCE_NAMES[name]} search failed: {e!r}")
-                store.mark_warned(name)
+        if dropped:
+            headline = f"Price drop (was £{row['price_pcm']:,})"
+        stats["new"] += 1
+
+        ok, why = basic_match(listing, criteria)
+        if ok:
+            try:
+                http.pause()
+                source.enrich(http, listing)
+            except Exception as e:
+                log(f"{name}: detail fetch failed for {listing.url}: {e!r}")
+                stats["detail_errors"] += 1
+                stats.setdefault("detail_error_examples", []).append(f"{listing.url}: {e!r}"[:200])
+                continue  # not stored, so it is retried next run
+            enrich.apply(listing, cfg)
+            ok, why = full_match(listing, criteria)
+            fp = fingerprint(listing)  # the detail page may have filled in the address
+        if not ok:
+            store.save(listing, fp, False, why, criteria_hash=chash)
             continue
-        if (store.get_source_status(name) or {}).get("warned"):
-            notifier.alert_admin(f"{SOURCE_NAMES[name]} is working again.")
-        store.record_success(name)
-        stats["results"] = len(results)
-        known = store.for_source(name)
-        unchanged = []
 
-        for listing in results:
-            fp = fingerprint(listing)
-            row = known.get(listing.key)
-            headline = "New match"
-            dropped = bool(row and row["price_pcm"] and listing.price_pcm and listing.price_pcm < row["price_pcm"])
-            if row and not dropped and row["criteria_hash"] == chash:
-                unchanged.append(listing.key)
-                continue
-            if dropped:
-                headline = f"Price drop (was £{row['price_pcm']:,})"
-            stats["new"] += 1
+        # The group only ever hears about a house once (plus real price drops).
+        first_alert = store.alerted_with_fingerprint(fp)
+        # Rejected stays rejected, even after a price drop (which changes the fingerprint).
+        rejected = (row and row["status"] == "rejected") or store.status_for_fingerprint(fp) == "rejected"
+        if seeding or rejected or (first_alert and not dropped) \
+                or (row and row["matched"] and not dropped):
+            if seeding:
+                quiet_matches.setdefault(fp, listing)
+            elif first_alert and not row and first_alert["source"] != name:
+                add_site_to_alert(store, notifier, first_alert, listing)
+            store.save(listing, fp, True, criteria_hash=chash)
+            continue
+        if rechecking:  # newly matching after a config/code change: sent together after all sources
+            pending.append((listing, fp, headline))
+            store.save(listing, fp, True, criteria_hash=chash)
+            continue
 
-            ok, why = basic_match(listing, criteria)
-            if ok:
-                try:
-                    http.pause()
-                    source.enrich(http, listing)
-                except Exception as e:
-                    log(f"{name}: detail fetch failed for {listing.url}: {e!r}")
-                    stats["detail_errors"] += 1
-                    stats.setdefault("detail_error_examples", []).append(f"{listing.url}: {e!r}"[:200])
-                    continue  # not stored, so it is retried next run
-                enrich.apply(listing, cfg)
-                ok, why = full_match(listing, criteria)
-                fp = fingerprint(listing)  # the detail page may have filled in the address
-            if not ok:
-                store.save(listing, fp, False, why, criteria_hash=chash)
-                continue
+        msg_id = notifier.send_listing(listing, headline)
+        log(f"{name}: ALERT {listing.address} £{listing.price_pcm} score={listing.score}")
+        stats["alerts"] += 1
+        store.save(listing, fp, True, message_id=msg_id, criteria_hash=chash)
+    store.touch(unchanged)
+    log(f"{name}: {len(results)} results, {stats['new']} new/changed")
 
-            # The group only ever hears about a house once (plus real price drops).
-            first_alert = store.alerted_with_fingerprint(fp)
-            # Rejected stays rejected, even after a price drop (which changes the fingerprint).
-            rejected = (row and row["status"] == "rejected") or store.status_for_fingerprint(fp) == "rejected"
-            if seeding or rejected or (first_alert and not dropped) \
-                    or (row and row["matched"] and not dropped):
-                if seeding:
-                    quiet_matches.setdefault(fp, listing)
-                elif first_alert and not row and first_alert["source"] != name:
-                    add_site_to_alert(store, notifier, first_alert, listing)
-                store.save(listing, fp, True, criteria_hash=chash)
-                continue
-            if rechecking:  # newly matching after a config/code change: sent together below
-                pending.append((listing, fp, headline))
-                store.save(listing, fp, True, criteria_hash=chash)
-                continue
 
-            msg_id = notifier.send_listing(listing, headline)
-            log(f"{name}: ALERT {listing.address} £{listing.price_pcm} score={listing.score}")
-            stats["alerts"] += 1
-            store.save(listing, fp, True, message_id=msg_id, criteria_hash=chash)
-        store.touch(unchanged)
-        log(f"{name}: {len(results)} results, {stats['new']} new/changed")
-
-    if pending:
-        send_pending(store, notifier, pending, chash)
-    if seeding:
+def _report(notifier, details: dict[str, dict], quiet_matches: dict[str, Listing] | None) -> None:
+    """End-of-run messages to the admin: the first run's quiet matches, and detail pages that failed."""
+    if quiet_matches is not None:
         ranked = sorted(quiet_matches.values(), key=lambda l: -l.score)
         notifier.alert_admin(
             f"first run: recorded {len(ranked)} current matches without alerting the group:\n" + "\n".join(
                 f"• {l.score} · £{l.price_pcm:,} {l.address}" for l in ranked), level="info")
-
     detail_failures = {n: d for n, d in details.items() if d["detail_errors"]}
     if detail_failures:
         notifier.alert_admin("Some listing pages failed to load (they'll be retried next run):\n" + "\n".join(
             f"{SOURCE_NAMES[n]}: {d['detail_errors']}× e.g. {d['detail_error_examples'][0]}"
             for n, d in detail_failures.items()))
-
-    for n, d in details.items():
-        if not d["error"]:
-            store.set_meta(f"config_hash:{n}", chash)
-    ok = all(not d["error"] for d in details.values())
-    store.finish_run(run_id, ok, details)
-
-    alerts_sent = sum(d["alerts"] for d in details.values()) + len(pending)
-    if alerts_sent and cfg.get("dashboard_url"):
-        wake_dashboard(cfg["dashboard_url"])
-    if cfg.get("heartbeat_hours"):
-        maybe_send_heartbeat(store, notifier, cfg["heartbeat_hours"])
 
 
 def wake_dashboard(url: str) -> None:
@@ -314,7 +334,7 @@ def cli() -> None:
 
     if args.command == "dashboard":
         from rentbot.dashboard import serve
-        serve(Store(db_target(args.db)), cfg, notifier, scan_target=db_target(args.db))
+        serve(Store(db_target(args.db)), cfg, notifier)
         return
 
     if args.command == "test-alert":
@@ -328,7 +348,7 @@ def cli() -> None:
                 store = Store(Path(":memory:") if args.dry_run else db_target(args.db))
                 if args.dry_run:  # skip seeding so every match prints as an alert
                     store.save(Listing("dry", "run", "", "", None, None), "", False)
-                http = Http(cfg["http"]["timeout_seconds"], tuple(cfg["http"]["detail_delay_seconds"]))
+                http = make_http(cfg)
             run_once(cfg, store, notifier, http, only=only, runner=args.runner)
         except Exception:
             tb = traceback.format_exc()
