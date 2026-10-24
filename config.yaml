@@ -39,9 +39,10 @@ loop_interval_seconds: 600
 # with `uv run python scripts/sync_schedule.py`.
 # wdays: 0 = Sunday ... 6 = Saturday (omit for every day).
 schedule:
-  - {name: weekday, wdays: [1, 2, 3, 4, 5], hours: [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22],
-     minutes: [0, 15, 30, 45]}                    # Mon-Fri 07:00-22:45 every 15 min
-  - {name: weekday evening/morning, wdays: [1, 2, 3, 4, 5], hours: [6, 23], minutes: [0, 30]}  # 06:00, 06:30, 23:00, 23:30
+  - {name: weekday, wdays: [1, 2, 3, 4, 5], hours: [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
+     minutes: [0, 15, 30, 45]}                    # Mon-Fri 08:00-18:45 every 15 min
+  - {name: weekday evening/morning, wdays: [1, 2, 3, 4, 5], hours: [6, 7, 19, 20, 21, 22, 23],
+     minutes: [0, 30]}                            # Mon-Fri 06:00-07:30 and 19:00-23:30 every 30 min
   - {name: weekend, wdays: [0, 6], hours: [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23],
      minutes: [0]}                                # Sat-Sun 07:00-23:00 hourly
   - {name: night, hours: [2, 4], minutes: [0]}    # 02:00, 04:00 every day
