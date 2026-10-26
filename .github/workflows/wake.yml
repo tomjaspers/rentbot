@@ -1,0 +1,22 @@
+name: wake
+
+# Wakes the Render dashboard before the first cron-job.org scan of the day (08:00 UK, Mon-Fri): calls
+# from cron-job.org to the asleep free instance get a 502 and don't wake it. GitHub cron is UTC, so this
+# fires at 06:50 and 07:50 UTC to cover 07:50 UK in both GMT and BST; GitHub can start runs late.
+on:
+  schedule:
+    - cron: "50 6,7 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping /healthz until the instance is up (it sleeps again after 15 idle minutes, so not much earlier than 07:45)
+        run: |
+          for i in $(seq 1 10); do
+            curl -sf --max-time 60 https://rentbot-dashboard.onrender.com/healthz && exit 0
+            sleep 15
+          done
+          exit 1

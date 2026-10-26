@@ -1,5 +1,5 @@
 # Render Blueprint: the dashboard, which also scans when cron-job.org calls /api/scan (see schedule in config.yaml)
-# (the calls also keep the free instance awake).
+# (the 15-min calls keep the free instance awake by day; it can't wake for cron-job.org, so .github/workflows/wake.yml wakes it each morning).
 services:
   - type: web
     name: rentbot-dashboard
